@@ -5,13 +5,16 @@ const path = require('path');
 // Em produção, grava os arquivos de credenciais a partir de env vars
 // (o Render não tem gcloud instalado nem sistema de arquivos persistente)
 if (process.env.NODE_ENV === 'production') {
+  function cleanJson(raw) {
+    return raw.replace(/\r?\n/g, '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+  }
   if (process.env.GOOGLE_TOKENS) {
-    const tokens = JSON.stringify(JSON.parse(process.env.GOOGLE_TOKENS));
+    const tokens = JSON.stringify(JSON.parse(cleanJson(process.env.GOOGLE_TOKENS)));
     fs.writeFileSync(path.join(__dirname, 'tokens.json'), tokens, 'utf8');
     console.log('[Startup] tokens.json gravado a partir de GOOGLE_TOKENS');
   }
   if (process.env.GOOGLE_ADC_CREDENTIALS) {
-    const adc = JSON.stringify(JSON.parse(process.env.GOOGLE_ADC_CREDENTIALS));
+    const adc = JSON.stringify(JSON.parse(cleanJson(process.env.GOOGLE_ADC_CREDENTIALS)));
     fs.writeFileSync(path.join(__dirname, 'adc_credentials.json'), adc, 'utf8');
     console.log('[Startup] adc_credentials.json gravado a partir de GOOGLE_ADC_CREDENTIALS');
   }
