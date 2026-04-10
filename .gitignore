@@ -1,0 +1,6 @@
+node_modules/
+backend/.env
+backend/tokens.json
+backend/adc_credentials.json
+backend/sent_emails.json
+backend/service-account.json

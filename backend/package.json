@@ -1,0 +1,25 @@
+{
+  "name": "pipeline-backend",
+  "version": "1.0.0",
+  "description": "Backend Node.js para o Pipeline de Prospecção (migrado do Apps Script)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "express-session": "^1.17.3",
+    "googleapis": "^140.0.0",
+    "@google-cloud/bigquery": "^7.3.0",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
+    "dotenv": "^16.3.1",
+    "cors": "^2.8.5",
+    "node-fetch": "^2.7.0",
+    "connect-pg-simple": "^9.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
