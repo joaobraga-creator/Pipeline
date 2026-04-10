@@ -6,11 +6,13 @@ const path = require('path');
 // (o Render não tem gcloud instalado nem sistema de arquivos persistente)
 if (process.env.NODE_ENV === 'production') {
   if (process.env.GOOGLE_TOKENS) {
-    fs.writeFileSync(path.join(__dirname, 'tokens.json'), process.env.GOOGLE_TOKENS, 'utf8');
+    const tokens = JSON.stringify(JSON.parse(process.env.GOOGLE_TOKENS));
+    fs.writeFileSync(path.join(__dirname, 'tokens.json'), tokens, 'utf8');
     console.log('[Startup] tokens.json gravado a partir de GOOGLE_TOKENS');
   }
   if (process.env.GOOGLE_ADC_CREDENTIALS) {
-    fs.writeFileSync(path.join(__dirname, 'adc_credentials.json'), process.env.GOOGLE_ADC_CREDENTIALS, 'utf8');
+    const adc = JSON.stringify(JSON.parse(process.env.GOOGLE_ADC_CREDENTIALS));
+    fs.writeFileSync(path.join(__dirname, 'adc_credentials.json'), adc, 'utf8');
     console.log('[Startup] adc_credentials.json gravado a partir de GOOGLE_ADC_CREDENTIALS');
   }
 }
