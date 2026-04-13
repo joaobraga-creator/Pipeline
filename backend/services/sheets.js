@@ -966,8 +966,14 @@ async function updateProspect(userEmail, data) {
   try {
     const isAdmin = await isUserAdmin(userEmail);
     const geoIdToUpdate = String(data.geoId).trim();
-    const placeIdToUpdateClean = cleanAndFormatString(data.placeId);
-    const placeIdToUpdateOriginal = String(data.placeId || '').trim();
+
+    // Se placeId vier vazio (leads do BigQuery sem ID_PROSPEC), gera um único LF-AAMM-NNN
+    let placeIdToUpdateOriginal = String(data.placeId || '').trim();
+    if (!placeIdToUpdateOriginal) {
+      placeIdToUpdateOriginal = await generateUniquePlaceId('LF');
+    }
+    const placeIdToUpdateClean = cleanAndFormatString(placeIdToUpdateOriginal);
+
     const newStatus = formatStatusForSaving(data.status);
     const now = new Date();
 
@@ -1231,17 +1237,12 @@ async function updateProspect(userEmail, data) {
     }
 
     // ── STATUS INTERMEDIÁRIOS ─────────────────────────────────────────────────
-    // Salva em Minhas Propostas sempre que há geoId válido.
-    // placeId pode vir vazio para leads do BigQuery sem Place_ID atribuído.
-    if (geoIdToUpdate) {
+    if (placeIdToUpdateClean) {
       let mpRow = -1;
       for (let i = 1; i < propostasRows.length; i++) {
         const g = String(propostasRows[i][mpIdx['Geo_Id']] || '').trim();
         const pid = cleanAndFormatString(propostasRows[i][mpIdx['Place_id']] || '');
-        if (g !== geoIdToUpdate) continue;
-        // Se placeId foi informado, exige match; caso contrário basta o geoId.
-        if (placeIdToUpdateClean && pid !== placeIdToUpdateClean) continue;
-        mpRow = i; break;
+        if (g === geoIdToUpdate && pid === placeIdToUpdateClean) { mpRow = i; break; }
       }
 
       if (mpRow !== -1) {
