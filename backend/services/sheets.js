@@ -603,12 +603,20 @@ async function getAppData(userEmail) {
 
   // ── Aceites ─────────────────────────────────────────────────────────────────
   const aHeaders = aceitesRows[0] || [];
+  const _iAce = getColIndex(aHeaders, 'Aceite');
+  const _parseAceiteDate = v => {
+    if (!v) return new Date(0);
+    if (v instanceof Date) return v;
+    const slash = String(v).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (slash) return new Date(`${slash[3]}-${slash[2]}-${slash[1]}`);
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? new Date(0) : d;
+  };
   const aRows = aceitesRows.slice(1)
     .filter(row => row.some(c => c !== '' && c !== null && c !== undefined))
     .sort((a, b) => {
-      const iAce = getColIndex(aHeaders, 'Aceite');
-      const da = iAce !== -1 && a[iAce] ? new Date(a[iAce]) : new Date(0);
-      const db = iAce !== -1 && b[iAce] ? new Date(b[iAce]) : new Date(0);
+      const da = _iAce !== -1 ? _parseAceiteDate(a[_iAce]) : new Date(0);
+      const db = _iAce !== -1 ? _parseAceiteDate(b[_iAce]) : new Date(0);
       return db - da;
     });
 
