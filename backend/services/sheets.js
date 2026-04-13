@@ -608,8 +608,8 @@ async function getAppData(userEmail) {
     if (!v) return new Date(0);
     if (v instanceof Date) return v;
     const s = String(v).trim();
-    // DD/MM/YYYY ou D/M/YYYY
-    const slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    // DD/MM/YYYY HH:MM:SS ou D/M/YYYY
+    const slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
     if (slash) return new Date(`${slash[3]}-${slash[2].padStart(2,'0')}-${slash[1].padStart(2,'0')}`);
     // YYYY-MM-DD
     if (/^\d{4}-\d{2}-\d{2}/.test(s)) return new Date(s);
