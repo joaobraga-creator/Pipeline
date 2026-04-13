@@ -1267,7 +1267,10 @@
                 populateStatusSlaDropdowns(uniqueStatusSla);
                 populateGeoIdLeadDropdown();
 
-                filterTableData(currentActiveTabId);
+                // Popula todas as tabelas ao carregar — evita tabela vazia ao trocar de aba
+                ['minhasProspeccoes', 'minhasPropostas', 'propostasEmAndamento'].forEach(tabId => {
+                    filterTableData(tabId);
+                });
 
                 renderStatusCounters('minhasProspeccoes', appData.minhasProspeccoes || []);
                 renderStatusCounters('minhasPropostas', appData.minhasPropostas || []);

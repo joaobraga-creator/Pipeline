@@ -354,6 +354,8 @@ async function sendLeadProspectingEmail(lead) {
 
   const ccEmail = String(lead.consultorEmail || '').trim();
   const fromName = 'Mercado Livre – Expansão e Parcerias';
+  // RFC 2047 base64 — garante que caracteres especiais (–, ã) apareçam corretamente
+  const fromNameEncoded = `=?UTF-8?B?${Buffer.from(fromName).toString('base64')}?=`;
 
   // Monta mensagem RFC 2822
   // IMPORTANTE: usar null (não '') para linhas opcionais e filtrar por !== null
@@ -361,7 +363,7 @@ async function sendLeadProspectingEmail(lead) {
   const bodyBase64 = Buffer.from(htmlBody).toString('base64')
     .match(/.{1,76}/g).join('\r\n'); // RFC 2822: max 76 chars por linha
   const headers = [
-    `From: "${fromName}" <me>`,
+    `From: ${fromNameEncoded} <me>`,
     `To: ${emailDest}`,
     isValidEmail(ccEmail) ? `Cc: ${ccEmail}` : null,
     `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,

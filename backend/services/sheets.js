@@ -144,6 +144,14 @@ function getColIndex(headers, colName) {
   return idx;
 }
 
+// Converte "DD/MM/YYYY HH:MM" (formato BR) para timestamp ms — necessário para sort correto
+function parseBRDateToMs(s) {
+  if (!s) return 0;
+  const m = String(s).match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?/);
+  if (!m) return 0;
+  return new Date(`${m[3]}-${m[2]}-${m[1]}T${m[4] || '00'}:${m[5] || '00'}:00`).getTime() || 0;
+}
+
 function getColIndexLoose(headers, nameOrList) {
   const wanted = Array.isArray(nameOrList) ? nameOrList : [nameOrList];
   const wantedKeys = wanted.map(normalizeHeaderKey);
@@ -542,8 +550,8 @@ async function getAppData(userEmail) {
     .filter(row => row.some(c => c !== '' && c !== null && c !== undefined))
     .sort((a, b) => {
       const iDUC = getColIndex(mpHeaders, 'Data_Ultimo_Contato');
-      const da = iDUC !== -1 && a[iDUC] ? new Date(a[iDUC]) : new Date(0);
-      const db = iDUC !== -1 && b[iDUC] ? new Date(b[iDUC]) : new Date(0);
+      const da = iDUC !== -1 ? parseBRDateToMs(a[iDUC]) : 0;
+      const db = iDUC !== -1 ? parseBRDateToMs(b[iDUC]) : 0;
       return db - da;
     });
 
