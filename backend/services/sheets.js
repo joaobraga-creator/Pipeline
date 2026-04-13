@@ -1231,12 +1231,17 @@ async function updateProspect(userEmail, data) {
     }
 
     // ── STATUS INTERMEDIÁRIOS ─────────────────────────────────────────────────
-    if (placeIdToUpdateClean) {
+    // Salva em Minhas Propostas sempre que há geoId válido.
+    // placeId pode vir vazio para leads do BigQuery sem Place_ID atribuído.
+    if (geoIdToUpdate) {
       let mpRow = -1;
       for (let i = 1; i < propostasRows.length; i++) {
         const g = String(propostasRows[i][mpIdx['Geo_Id']] || '').trim();
         const pid = cleanAndFormatString(propostasRows[i][mpIdx['Place_id']] || '');
-        if (g === geoIdToUpdate && pid === placeIdToUpdateClean) { mpRow = i; break; }
+        if (g !== geoIdToUpdate) continue;
+        // Se placeId foi informado, exige match; caso contrário basta o geoId.
+        if (placeIdToUpdateClean && pid !== placeIdToUpdateClean) continue;
+        mpRow = i; break;
       }
 
       if (mpRow !== -1) {

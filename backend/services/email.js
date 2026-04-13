@@ -356,17 +356,21 @@ async function sendLeadProspectingEmail(lead) {
   const fromName = 'Mercado Livre – Expansão e Parcerias';
 
   // Monta mensagem RFC 2822
+  // IMPORTANTE: usar null (não '') para linhas opcionais e filtrar por !== null
+  // para preservar a linha em branco obrigatória entre cabeçalhos e corpo.
+  const bodyBase64 = Buffer.from(htmlBody).toString('base64')
+    .match(/.{1,76}/g).join('\r\n'); // RFC 2822: max 76 chars por linha
   const headers = [
     `From: "${fromName}" <me>`,
     `To: ${emailDest}`,
-    isValidEmail(ccEmail) ? `Cc: ${ccEmail}` : '',
+    isValidEmail(ccEmail) ? `Cc: ${ccEmail}` : null,
     `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
     'MIME-Version: 1.0',
     'Content-Type: text/html; charset=UTF-8',
     'Content-Transfer-Encoding: base64',
-    '',
-    Buffer.from(htmlBody).toString('base64')
-  ].filter(Boolean).join('\r\n');
+    '',           // linha em branco OBRIGATÓRIA — separa cabeçalhos do corpo
+    bodyBase64
+  ].filter(line => line !== null).join('\r\n');
 
   const raw = Buffer.from(headers).toString('base64')
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
