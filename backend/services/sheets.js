@@ -263,15 +263,20 @@ async function writeRow(spreadsheetId, sheetName, rowIndex1, rowData) {
 }
 
 // ─── Append linha ─────────────────────────────────────────────────────────────
+// Sempre escreve na linha seguinte à última com dados (evita inserção no meio da planilha
+// quando há linhas em branco — comportamento do INSERT_ROWS com boundary detection).
+// Retorna o número 1-based da linha onde os dados foram gravados.
 async function appendRow(spreadsheetId, sheetName, rowData) {
+  const existing = await readSheet(spreadsheetId, sheetName);
+  const nextRow = existing.length + 1;
   const sheets = await getSheetsClient();
-  await sheets.spreadsheets.values.append({
+  await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${sheetName}!A1`,
+    range: `'${sheetName}'!A${nextRow}`,
     valueInputOption: 'USER_ENTERED',
-    insertDataOption: 'INSERT_ROWS',
     requestBody: { values: [rowData] }
   });
+  return nextRow;
 }
 
 // ─── Deleta linha ─────────────────────────────────────────────────────────────
@@ -1143,11 +1148,8 @@ async function updateProspect(userEmail, data) {
         if (mpIdx['Telefone_Place'] !== -1) newRow[mpIdx['Telefone_Place']] = data.telefonePlace || '';
         if (mpIdx['Servico'] !== -1) newRow[mpIdx['Servico']] = servicoFromUpdate;
         if (mpIdx['LEAD_ID'] !== -1) newRow[mpIdx['LEAD_ID']] = data.leadId || '';
-        await appendRow(SPREADSHEET_ID, NOME_ABA_MINHAS_PROPOSTAS, newRow);
-        // stampDates via append na última linha
-        const freshRows = await readSheet(SPREADSHEET_ID, NOME_ABA_MINHAS_PROPOSTAS);
-        await stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, freshRows.length, newStatus, now);
-        mpRow = freshRows.length - 2; // 0-based index
+        const mpAppendedRow = await appendRow(SPREADSHEET_ID, NOME_ABA_MINHAS_PROPOSTAS, newRow);
+        await stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, mpAppendedRow, newStatus, now);
       }
 
       // 2) Aceites
@@ -1175,9 +1177,8 @@ async function updateProspect(userEmail, data) {
         if (aIdx['Telefone_Place'] !== -1) newRow[aIdx['Telefone_Place']] = data.telefonePlace || '';
         if (aIdx['Servico'] !== -1) newRow[aIdx['Servico']] = servicoFromUpdate;
         if (aIdx['LEAD_ID'] !== -1) newRow[aIdx['LEAD_ID']] = data.leadId || '';
-        await appendRow(SPREADSHEET_ID, NOME_ABA_ACEITES, newRow);
-        const freshRows = await readSheet(SPREADSHEET_ID, NOME_ABA_ACEITES);
-        await stampDates(NOME_ABA_ACEITES, aIdx, freshRows.length, newStatus, now);
+        const aAppendedRow = await appendRow(SPREADSHEET_ID, NOME_ABA_ACEITES, newRow);
+        await stampDates(NOME_ABA_ACEITES, aIdx, aAppendedRow, newStatus, now);
       }
 
       // 3) Pipeline
@@ -1229,9 +1230,8 @@ async function updateProspect(userEmail, data) {
         if (mpIdx['Place_id'] !== -1) newRow[mpIdx['Place_id']] = placeIdToUpdateOriginal;
         if (mpIdx['Motivo_recusa'] !== -1) newRow[mpIdx['Motivo_recusa']] = data.motivoRecusa || '';
         if (mpIdx['Servico'] !== -1) newRow[mpIdx['Servico']] = servicoFromUpdate;
-        await appendRow(SPREADSHEET_ID, NOME_ABA_MINHAS_PROPOSTAS, newRow);
-        const freshRows = await readSheet(SPREADSHEET_ID, NOME_ABA_MINHAS_PROPOSTAS);
-        await stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, freshRows.length, newStatus, now);
+        const mpAppendedRowD = await appendRow(SPREADSHEET_ID, NOME_ABA_MINHAS_PROPOSTAS, newRow);
+        await stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, mpAppendedRowD, newStatus, now);
       }
 
       // Pipeline: reseta para Em prospecção
@@ -1283,9 +1283,8 @@ async function updateProspect(userEmail, data) {
         if (mpIdx['Servico'] !== -1) newRow[mpIdx['Servico']] = servicoFromUpdate;
         if (mpIdx['Observacoes'] !== -1) newRow[mpIdx['Observacoes']] = data.observacoes || '';
         if (mpIdx['LEAD_ID'] !== -1) newRow[mpIdx['LEAD_ID']] = data.leadId || '';
-        await appendRow(SPREADSHEET_ID, NOME_ABA_MINHAS_PROPOSTAS, newRow);
-        const freshRows = await readSheet(SPREADSHEET_ID, NOME_ABA_MINHAS_PROPOSTAS);
-        await stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, freshRows.length, newStatus, now);
+        const mpAppendedRowI = await appendRow(SPREADSHEET_ID, NOME_ABA_MINHAS_PROPOSTAS, newRow);
+        await stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, mpAppendedRowI, newStatus, now);
       }
     }
 
