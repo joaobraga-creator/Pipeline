@@ -263,20 +263,27 @@ async function writeRow(spreadsheetId, sheetName, rowIndex1, rowData) {
 }
 
 // ─── Append linha ─────────────────────────────────────────────────────────────
-// Sempre escreve na linha seguinte à última com dados (evita inserção no meio da planilha
-// quando há linhas em branco — comportamento do INSERT_ROWS com boundary detection).
+// Usa OVERWRITE (expande a planilha se necessário) e extrai o número real da
+// linha gravada a partir do updatedRange da resposta da API.
 // Retorna o número 1-based da linha onde os dados foram gravados.
 async function appendRow(spreadsheetId, sheetName, rowData) {
-  const existing = await readSheet(spreadsheetId, sheetName);
-  const nextRow = existing.length + 1;
   const sheets = await getSheetsClient();
-  await sheets.spreadsheets.values.update({
+  const res = await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `'${sheetName}'!A${nextRow}`,
+    range: `'${sheetName}'!A1`,
     valueInputOption: 'USER_ENTERED',
+    insertDataOption: 'OVERWRITE',
     requestBody: { values: [rowData] }
   });
-  return nextRow;
+  // updatedRange ex: "'Minhas Propostas'!A52:AB52" → extrair 52
+  const updatedRange = res.data.updates && res.data.updates.updatedRange;
+  if (updatedRange) {
+    const match = updatedRange.match(/!([A-Z]+)(\d+)/);
+    if (match) return parseInt(match[2], 10);
+  }
+  // fallback: lê a planilha para descobrir última linha
+  const existing = await readSheet(spreadsheetId, sheetName);
+  return existing.length;
 }
 
 // ─── Deleta linha ─────────────────────────────────────────────────────────────
