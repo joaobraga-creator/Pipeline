@@ -263,27 +263,49 @@ async function writeRow(spreadsheetId, sheetName, rowIndex1, rowData) {
 }
 
 // ─── Append linha ─────────────────────────────────────────────────────────────
-// Usa OVERWRITE (expande a planilha se necessário) e extrai o número real da
-// linha gravada a partir do updatedRange da resposta da API.
-// Retorna o número 1-based da linha onde os dados foram gravados.
+// Equivalente ao safeAppendRow_ do Apps Script original:
+// - Lê todas as linhas do fundo para cima para encontrar a verdadeira última
+//   linha com dados (Geo_Id preenchido na col A OU >= 3 colunas preenchidas).
+// - Expande a planilha se necessário antes de gravar.
+// - Retorna o número 1-based da linha onde os dados foram gravados.
 async function appendRow(spreadsheetId, sheetName, rowData) {
   const sheets = await getSheetsClient();
-  const res = await sheets.spreadsheets.values.append({
+
+  // 1. Lê todos os dados para achar a verdadeira última linha com conteúdo
+  const allRows = await readSheet(spreadsheetId, sheetName);
+  let trueLastRow = 0;
+  for (let i = allRows.length - 1; i >= 0; i--) {
+    const row = allRows[i];
+    const colA = String(row[0] || '').trim();
+    const filledCount = row.filter(c => c !== '' && c !== null && c !== undefined).length;
+    if (colA !== '' || filledCount >= 3) { trueLastRow = i + 1; break; }
+  }
+  const targetRow = trueLastRow + 1;
+
+  // 2. Verifica se a planilha precisa ser expandida
+  const meta = await sheets.spreadsheets.get({
     spreadsheetId,
-    range: `'${sheetName}'!A1`,
+    ranges: [`'${sheetName}'`],
+    fields: 'sheets(properties(sheetId,gridProperties(rowCount)))'
+  });
+  const sheetProps = meta.data.sheets[0].properties;
+  if (targetRow > sheetProps.gridProperties.rowCount) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ appendDimension: {
+        sheetId: sheetProps.sheetId, dimension: 'ROWS', length: 200
+      }}]}
+    });
+  }
+
+  // 3. Grava na linha exata
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${sheetName}'!A${targetRow}`,
     valueInputOption: 'USER_ENTERED',
-    insertDataOption: 'OVERWRITE',
     requestBody: { values: [rowData] }
   });
-  // updatedRange ex: "'Minhas Propostas'!A52:AB52" → extrair 52
-  const updatedRange = res.data.updates && res.data.updates.updatedRange;
-  if (updatedRange) {
-    const match = updatedRange.match(/!([A-Z]+)(\d+)/);
-    if (match) return parseInt(match[2], 10);
-  }
-  // fallback: lê a planilha para descobrir última linha
-  const existing = await readSheet(spreadsheetId, sheetName);
-  return existing.length;
+  return targetRow;
 }
 
 // ─── Deleta linha ─────────────────────────────────────────────────────────────
@@ -1091,6 +1113,24 @@ async function updateProspect(userEmail, data) {
       await writeCell(SPREADSHEET_ID, sheetName, rowIndex1Based, colIndex + 1, value);
     }
 
+    // Copia datas de status de Minhas Propostas para Aceites / Pipeline.
+    // Só copia se a célula destino estiver vazia — preserva datas já gravadas.
+    async function copiarDatasDeMP(dstSheet, dstIdx, dstRow1Based, mpRow1Based) {
+      const DATE_COLS = [
+        'Data_Status_Em_Prospeccao', 'Data_Status_Analisando', 'Data_Status_Aceitou',
+        'Data_Status_Ativo', 'Data_Status_Recusado', 'Data_Status_Desistiu', 'Primeiro_Contato'
+      ];
+      const mpRowData = propostasRows[mpRow1Based - 1] || [];
+      const dstRowData = (dstSheet === NOME_ABA_ACEITES ? aceitesRows : pipelineRows)[dstRow1Based - 1] || [];
+      for (const col of DATE_COLS) {
+        if (mpIdx[col] === -1 || dstIdx[col] === -1) continue;
+        const dstVal = String(dstRowData[dstIdx[col]] || '').trim();
+        if (dstVal) continue; // não sobrescreve
+        const mpVal = String(mpRowData[mpIdx[col]] || '').trim();
+        if (mpVal) await writeCell(SPREADSHEET_ID, dstSheet, dstRow1Based, dstIdx[col] + 1, mpVal);
+      }
+    }
+
     function createNewRow(baseRow, srcHeaders, dstHeaders, srcIdx, dstIdx) {
       const newRow = Array(dstHeaders.length).fill('');
       const COLS_NAO_COPIAR = new Set([
@@ -1174,6 +1214,7 @@ async function updateProspect(userEmail, data) {
         await setIfExists(NOME_ABA_ACEITES, aIdx, r, 'Telefone_Place', data.telefonePlace || '', aceitesRows);
         await setIfExists(NOME_ABA_ACEITES, aIdx, r, 'Servico', servicoFromUpdate, aceitesRows);
         await setIfExists(NOME_ABA_ACEITES, aIdx, r, 'LEAD_ID', data.leadId || '', aceitesRows);
+        if (mpRow !== -1) await copiarDatasDeMP(NOME_ABA_ACEITES, aIdx, r, mpRow + 1);
         await stampDates(NOME_ABA_ACEITES, aIdx, r, newStatus, now);
       } else {
         const baseRow = pipelineRowValues || createColdLeadBaseRow(data, pHeaders, userEmail);
@@ -1185,6 +1226,7 @@ async function updateProspect(userEmail, data) {
         if (aIdx['Servico'] !== -1) newRow[aIdx['Servico']] = servicoFromUpdate;
         if (aIdx['LEAD_ID'] !== -1) newRow[aIdx['LEAD_ID']] = data.leadId || '';
         const aAppendedRow = await appendRow(SPREADSHEET_ID, NOME_ABA_ACEITES, newRow);
+        if (mpRow !== -1) await copiarDatasDeMP(NOME_ABA_ACEITES, aIdx, aAppendedRow, mpRow + 1);
         await stampDates(NOME_ABA_ACEITES, aIdx, aAppendedRow, newStatus, now);
       }
 
@@ -1197,6 +1239,7 @@ async function updateProspect(userEmail, data) {
         await setIfExists(NOME_ABA_PIPELINE, pIdx, pRow1Based, 'Telefone_Place', data.telefonePlace || '', pipelineRows);
         await setIfExists(NOME_ABA_PIPELINE, pIdx, pRow1Based, 'Servico', servicoFromUpdate, pipelineRows);
         await setIfExists(NOME_ABA_PIPELINE, pIdx, pRow1Based, 'LEAD_ID', data.leadId || '', pipelineRows);
+        if (mpRow !== -1) await copiarDatasDeMP(NOME_ABA_PIPELINE, pIdx, pRow1Based, mpRow + 1);
         await stampDates(NOME_ABA_PIPELINE, pIdx, pRow1Based, newStatus, now);
       }
 
