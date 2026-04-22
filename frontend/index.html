@@ -2074,6 +2074,9 @@ window.onload = function() {
         const newStatus   = document.getElementById('modalStatus').value;
         const placeId     = document.getElementById('modalPlaceIdInput').value;
 
+        const originalStatus = window._originalStatus || '';
+        const statusMudou    = originalStatus !== newStatus;
+
         // Validações básicas
         if (!newServico || newServico.trim() === '') {
             showModalMessage("O campo 'Serviço' é obrigatório.", 'error');
@@ -2093,9 +2096,6 @@ window.onload = function() {
             saveButton.textContent = 'Salvar Alterações';
             return;
         }
-
-        const originalStatus = window._originalStatus || '';
-        const statusMudou    = originalStatus !== newStatus;
 
         // ────────────────────────────────────────────────────────
         // CAMINHO RÁPIDO: status não mudou → grava campos simples
