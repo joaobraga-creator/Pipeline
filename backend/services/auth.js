@@ -1,27 +1,36 @@
-const passport = require('passport');
-const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const bcrypt = require('bcrypt');
 
-passport.use(new GoogleStrategy({
-  clientID: process.env.GOOGLE_CLIENT_ID,
-  clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-  callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:3000/auth/google/callback'
-}, (accessToken, refreshToken, profile, done) => {
-  const email = profile.emails && profile.emails[0] ? profile.emails[0].value : '';
-  const allowedDomain = process.env.ALLOWED_DOMAIN;
+const SALT_ROUNDS = 10;
+let userCache = null;
 
-  // Verifica domínio se configurado
-  if (allowedDomain && !email.endsWith('@' + allowedDomain)) {
-    return done(null, false, { message: `Acesso restrito ao domínio @${allowedDomain}` });
+async function loadUsers() {
+  if (userCache) return userCache;
+  const raw = process.env.USERS || '';
+  const users = {};
+  for (const entry of raw.split(',')) {
+    const idx = entry.indexOf(':');
+    if (idx === -1) continue;
+    const email = entry.slice(0, idx).trim().toLowerCase();
+    const pass = entry.slice(idx + 1).trim();
+    if (!email || !pass) continue;
+    if (pass.startsWith('$2b$') || pass.startsWith('$2a$')) {
+      users[email] = pass;
+    } else {
+      users[email] = await bcrypt.hash(pass, SALT_ROUNDS);
+    }
   }
+  userCache = users;
+  return users;
+}
 
-  const user = {
-    id: profile.id,
-    email: email,
-    name: profile.displayName,
-    photo: profile.photos && profile.photos[0] ? profile.photos[0].value : null
-  };
-  return done(null, user);
-}));
+async function authenticate(email, password) {
+  if (!email || !password) return null;
+  const users = await loadUsers();
+  const hash = users[email.toLowerCase()];
+  if (!hash) return null;
+  const valid = await bcrypt.compare(password, hash);
+  if (!valid) return null;
+  return { email: email.toLowerCase(), name: email.split('@')[0] };
+}
 
-passport.serializeUser((user, done) => done(null, user));
-passport.deserializeUser((user, done) => done(null, user));
+module.exports = { authenticate };

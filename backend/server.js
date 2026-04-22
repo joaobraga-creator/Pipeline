@@ -2,8 +2,6 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 
-// Em produção, grava os arquivos de credenciais a partir de env vars
-// (o Render não tem gcloud instalado nem sistema de arquivos persistente)
 if (process.env.NODE_ENV === 'production') {
   function cleanJson(raw) {
     return raw.replace(/\r?\n/g, '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
@@ -22,10 +20,7 @@ if (process.env.NODE_ENV === 'production') {
 
 const express = require('express');
 const session = require('express-session');
-const passport = require('passport');
 const cors = require('cors');
-
-require('./services/auth');
 
 const apiRoutes = require('./routes/api');
 const authRoutes = require('./routes/auth');
@@ -48,43 +43,40 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000
   }
 }));
 
-app.use(passport.initialize());
-app.use(passport.session());
-
-// Serve frontend
 app.use(express.static(path.join(__dirname, '../frontend')));
 
-// Rotas
 app.use('/auth', authRoutes);
 app.use('/api', ensureAuthenticated, apiRoutes);
 
-// Raiz: em dev abre direto, em producao exige login
 app.get('/', (req, res) => {
-  if (DEV_MODE || req.isAuthenticated()) {
+  if (DEV_MODE || req.session.user) {
     res.sendFile(path.join(__dirname, '../frontend/index.html'));
   } else {
     res.redirect('/auth/login');
   }
 });
 
-app.get('/login', (req, res) => {
-  res.sendFile(path.join(__dirname, '../frontend/index.html'));
-});
+app.get('/login', (req, res) => res.redirect('/auth/login'));
 
 function ensureAuthenticated(req, res, next) {
-  if (DEV_MODE || req.isAuthenticated()) return next();
-  res.status(401).json({ error: 'Nao autenticado. Faca login em /auth/google' });
+  if (DEV_MODE) return next();
+  if (!req.session.user) {
+    return res.status(401).json({ error: 'Nao autenticado. Faca login em /auth/login' });
+  }
+  req.user = req.session.user;
+  next();
 }
 
 app.get('/api/me', ensureAuthenticated, (req, res) => {
   if (DEV_MODE) {
     return res.json({ email: process.env.DEV_USER_EMAIL || 'joao.braga@mercadolivre.com', name: 'Dev Mode', photo: '' });
   }
-  res.json({ email: req.user.email, name: req.user.name, photo: req.user.photo });
+  res.json({ email: req.user.email, name: req.user.name, photo: '' });
 });
 
 app.listen(PORT, () => {
