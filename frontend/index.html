@@ -1160,13 +1160,17 @@
     // BRIDGE: substitui google.script.run por fetch() REST API
     // ===============================================================
     function apiCall(endpoint, data, successHandler, failureHandler) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 45000);
         fetch('/api/' + endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
+            signal: controller.signal,
             body: JSON.stringify(data || {})
         })
         .then(function(res) {
+            clearTimeout(timer);
             if (res.status === 401) {
                 window.location.href = '/auth/login';
                 return;
@@ -1177,6 +1181,7 @@
             if (result !== undefined && successHandler) successHandler(result);
         })
         .catch(function(err) {
+            clearTimeout(timer);
             if (failureHandler) failureHandler(err);
             else console.error('[apiCall] Erro em ' + endpoint + ':', err);
         });

@@ -97,9 +97,27 @@ function getAuth() {
   });
 }
 
+let _sheetsClientCache = null;
 async function getSheetsClient() {
+  if (_sheetsClientCache) return _sheetsClientCache;
   const auth = await getAuth().getClient();
-  return google.sheets({ version: 'v4', auth });
+  _sheetsClientCache = google.sheets({ version: 'v4', auth });
+  return _sheetsClientCache;
+}
+
+async function batchWriteCells(spreadsheetId, writes) {
+  if (!writes || writes.length === 0) return;
+  const sheets = await getSheetsClient();
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: 'USER_ENTERED',
+      data: writes.map(w => ({
+        range: `${w.sheetName}!${colToLetter(w.col1)}${w.row1}`,
+        values: [[w.value === null || w.value === undefined ? '' : w.value]]
+      }))
+    }
+  });
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -920,7 +938,7 @@ async function atualizarCamposSimples(userEmail, data) {
   }
 
   const campos = data.campos || {};
-  let atualizados = 0;
+  const writes = [];
 
   for (const colName of Object.keys(campos)) {
     if (PROTEGIDAS.has(colName)) continue;
@@ -928,24 +946,19 @@ async function atualizarCamposSimples(userEmail, data) {
     if (colIdx0 === -1) continue;
 
     let valor = campos[colName];
-    if (DATE_COLS.has(colName) && typeof valor === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(valor)) {
-      // Mantém como string ISO — Sheets aceita
-    }
     if (colName === 'SVC') {
       const atual = String(rows[rowIndex1Based - 1][colIdx0] || '').trim();
       if (atual !== '') continue;
     }
-
-    await writeCell(SPREADSHEET_ID, nomAba, rowIndex1Based, colIdx0 + 1, valor === null || valor === undefined ? '' : valor);
-    atualizados++;
+    writes.push({ sheetName: nomAba, row1: rowIndex1Based, col1: colIdx0 + 1, value: valor === null || valor === undefined ? '' : valor });
   }
 
-  if (atualizados === 0) return { success: false, message: 'Nenhuma coluna válida foi atualizada.' };
+  if (writes.length === 0) return { success: false, message: 'Nenhuma coluna válida foi atualizada.' };
 
   // Data_Ultimo_Contato automática
   const ducCol = getColIndex(headers, 'Data_Ultimo_Contato');
   if (ducCol !== -1 && !campos['Data_Ultimo_Contato']) {
-    await writeCell(SPREADSHEET_ID, nomAba, rowIndex1Based, ducCol + 1, formatDateTimeBR(new Date()));
+    writes.push({ sheetName: nomAba, row1: rowIndex1Based, col1: ducCol + 1, value: formatDateTimeBR(new Date()) });
   }
 
   // Propaga ao Pipeline
@@ -960,15 +973,16 @@ async function atualizarCamposSimples(userEmail, data) {
         for (const col of SYNC_COLS) {
           if (campos.hasOwnProperty(col)) {
             const pC = getColIndex(pHdrs, col);
-            if (pC !== -1) {
-              await writeCell(SPREADSHEET_ID, NOME_ABA_PIPELINE, i + 1, pC + 1, campos[col] ?? '');
-            }
+            if (pC !== -1) writes.push({ sheetName: NOME_ABA_PIPELINE, row1: i + 1, col1: pC + 1, value: campos[col] ?? '' });
           }
         }
         break;
       }
     }
   }
+
+  await batchWriteCells(SPREADSHEET_ID, writes);
+  const atualizados = writes.length;
 
   return { success: true, message: `${atualizados} campo(s) atualizado(s) com sucesso.` };
 }
@@ -1080,7 +1094,7 @@ async function updateProspect(userEmail, data) {
       'desistiu': 'Data_Status_Desistiu'
     };
 
-    async function stampDates(sheetName, idxMap, rowIndex1Based, status, when) {
+    function stampDates(sheetName, idxMap, rowIndex1Based, status, when, writes) {
       const key = normalizeStatus(status);
       const allRows = sheetName === NOME_ABA_PIPELINE ? pipelineRows
                    : sheetName === NOME_ABA_MINHAS_PROPOSTAS ? propostasRows
@@ -1089,33 +1103,31 @@ async function updateProspect(userEmail, data) {
 
       if (idxMap['Primeiro_Contato'] !== -1 && key === 'em prospecção') {
         const current = currentRow[idxMap['Primeiro_Contato']];
-        if (!current) await writeCell(SPREADSHEET_ID, sheetName, rowIndex1Based, idxMap['Primeiro_Contato'] + 1, formatDateTimeBR(when));
+        if (!current) writes.push({ sheetName, row1: rowIndex1Based, col1: idxMap['Primeiro_Contato'] + 1, value: formatDateTimeBR(when) });
       }
       if (idxMap['Data_Ultimo_Contato'] !== -1) {
-        await writeCell(SPREADSHEET_ID, sheetName, rowIndex1Based, idxMap['Data_Ultimo_Contato'] + 1, formatDateTimeBR(when));
+        writes.push({ sheetName, row1: rowIndex1Based, col1: idxMap['Data_Ultimo_Contato'] + 1, value: formatDateTimeBR(when) });
       }
       const colName = mapStatusToDateCol[key];
       if (colName && idxMap[colName] !== -1) {
-        await writeCell(SPREADSHEET_ID, sheetName, rowIndex1Based, idxMap[colName] + 1, formatDateTimeBR(when));
+        writes.push({ sheetName, row1: rowIndex1Based, col1: idxMap[colName] + 1, value: formatDateTimeBR(when) });
       }
       if (key === 'aceitou' && idxMap['Aceite'] !== -1) {
-        await writeCell(SPREADSHEET_ID, sheetName, rowIndex1Based, idxMap['Aceite'] + 1, formatDateTimeBR(when));
+        writes.push({ sheetName, row1: rowIndex1Based, col1: idxMap['Aceite'] + 1, value: formatDateTimeBR(when) });
       }
     }
 
-    async function setIfExists(sheetName, idxMap, rowIndex1Based, colName, value, allRows) {
+    function setIfExists(sheetName, idxMap, rowIndex1Based, colName, value, allRows, writes) {
       const colIndex = idxMap[colName];
       if (colIndex === -1) return;
       if (colName === 'SVC' && String(value || '').trim() !== '') {
         const current = (allRows[rowIndex1Based - 1] || [])[colIndex];
         if (String(current || '').trim() !== '') return;
       }
-      await writeCell(SPREADSHEET_ID, sheetName, rowIndex1Based, colIndex + 1, value);
+      writes.push({ sheetName, row1: rowIndex1Based, col1: colIndex + 1, value });
     }
 
-    // Copia datas de status de Minhas Propostas para Aceites / Pipeline.
-    // Só copia se a célula destino estiver vazia — preserva datas já gravadas.
-    async function copiarDatasDeMP(dstSheet, dstIdx, dstRow1Based, mpRow1Based) {
+    function copiarDatasDeMP(dstSheet, dstIdx, dstRow1Based, mpRow1Based, writes) {
       const DATE_COLS = [
         'Data_Status_Em_Prospeccao', 'Data_Status_Analisando', 'Data_Status_Aceitou',
         'Data_Status_Ativo', 'Data_Status_Recusado', 'Data_Status_Desistiu', 'Primeiro_Contato'
@@ -1127,7 +1139,7 @@ async function updateProspect(userEmail, data) {
         const dstVal = String(dstRowData[dstIdx[col]] || '').trim();
         if (dstVal) continue; // não sobrescreve
         const mpVal = String(mpRowData[mpIdx[col]] || '').trim();
-        if (mpVal) await writeCell(SPREADSHEET_ID, dstSheet, dstRow1Based, dstIdx[col] + 1, mpVal);
+        if (mpVal) writes.push({ sheetName: dstSheet, row1: dstRow1Based, col1: dstIdx[col] + 1, value: mpVal });
       }
     }
 
@@ -1157,6 +1169,8 @@ async function updateProspect(userEmail, data) {
     if (statusKey === normalizeStatus(STATUS.ACEITOU) || statusKey === normalizeStatus(STATUS.ATIVO)) {
       if (!placeIdToUpdateClean) return { success: false, message: 'Place_Id é obrigatório para Aceite/Ativo.' };
 
+      const writes = [];
+
       // 1) Minhas Propostas
       let mpRow = -1;
       for (let i = 1; i < propostasRows.length; i++) {
@@ -1168,9 +1182,9 @@ async function updateProspect(userEmail, data) {
             const r = i + 1;
             const curSt = normalizeStatus(propostasRows[i][mpIdx['Status_prospeccao']] || '');
             if (curSt !== normalizeStatus(STATUS.RECUSADO) && curSt !== normalizeStatus(STATUS.DESISTIU)) {
-              await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Status_prospeccao', STATUS.RECUSADO, propostasRows);
-              await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Motivo_recusa', 'Outro Place aceitou a oferta', propostasRows);
-              await stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, STATUS.RECUSADO, now);
+              setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Status_prospeccao', STATUS.RECUSADO, propostasRows, writes);
+              setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Motivo_recusa', 'Outro Place aceitou a oferta', propostasRows, writes);
+              stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, STATUS.RECUSADO, now, writes);
             }
           }
         }
@@ -1178,14 +1192,14 @@ async function updateProspect(userEmail, data) {
 
       if (mpRow !== -1) {
         const r = mpRow + 1;
-        await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Status_prospeccao', newStatus, propostasRows);
-        await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Place_id', placeIdToUpdateOriginal, propostasRows);
-        await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Place_name', data.placeName || '', propostasRows);
-        await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Telefone_Place', data.telefonePlace || '', propostasRows);
-        await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Servico', servicoFromUpdate, propostasRows);
-        await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'LEAD_ID', data.leadId || '', propostasRows);
-        await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'SVC', svcFromUpdate, propostasRows);
-        await stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, newStatus, now);
+        setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Status_prospeccao', newStatus, propostasRows, writes);
+        setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Place_id', placeIdToUpdateOriginal, propostasRows, writes);
+        setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Place_name', data.placeName || '', propostasRows, writes);
+        setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Telefone_Place', data.telefonePlace || '', propostasRows, writes);
+        setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Servico', servicoFromUpdate, propostasRows, writes);
+        setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'LEAD_ID', data.leadId || '', propostasRows, writes);
+        setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'SVC', svcFromUpdate, propostasRows, writes);
+        stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, newStatus, now, writes);
       } else {
         const baseRow = pipelineRowValues || createColdLeadBaseRow(data, pHeaders, userEmail);
         const newRow = createNewRow(baseRow, pHeaders, mpHeaders, pIdx, mpIdx);
@@ -1196,7 +1210,7 @@ async function updateProspect(userEmail, data) {
         if (mpIdx['Servico'] !== -1) newRow[mpIdx['Servico']] = servicoFromUpdate;
         if (mpIdx['LEAD_ID'] !== -1) newRow[mpIdx['LEAD_ID']] = data.leadId || '';
         const mpAppendedRow = await appendRow(SPREADSHEET_ID, NOME_ABA_MINHAS_PROPOSTAS, newRow);
-        await stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, mpAppendedRow, newStatus, now);
+        stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, mpAppendedRow, newStatus, now, writes);
       }
 
       // 2) Aceites
@@ -1209,13 +1223,13 @@ async function updateProspect(userEmail, data) {
 
       if (aRow !== -1) {
         const r = aRow + 1;
-        await setIfExists(NOME_ABA_ACEITES, aIdx, r, 'Status_prospeccao', newStatus, aceitesRows);
-        await setIfExists(NOME_ABA_ACEITES, aIdx, r, 'Place_id', placeIdToUpdateOriginal, aceitesRows);
-        await setIfExists(NOME_ABA_ACEITES, aIdx, r, 'Telefone_Place', data.telefonePlace || '', aceitesRows);
-        await setIfExists(NOME_ABA_ACEITES, aIdx, r, 'Servico', servicoFromUpdate, aceitesRows);
-        await setIfExists(NOME_ABA_ACEITES, aIdx, r, 'LEAD_ID', data.leadId || '', aceitesRows);
-        if (mpRow !== -1) await copiarDatasDeMP(NOME_ABA_ACEITES, aIdx, r, mpRow + 1);
-        await stampDates(NOME_ABA_ACEITES, aIdx, r, newStatus, now);
+        setIfExists(NOME_ABA_ACEITES, aIdx, r, 'Status_prospeccao', newStatus, aceitesRows, writes);
+        setIfExists(NOME_ABA_ACEITES, aIdx, r, 'Place_id', placeIdToUpdateOriginal, aceitesRows, writes);
+        setIfExists(NOME_ABA_ACEITES, aIdx, r, 'Telefone_Place', data.telefonePlace || '', aceitesRows, writes);
+        setIfExists(NOME_ABA_ACEITES, aIdx, r, 'Servico', servicoFromUpdate, aceitesRows, writes);
+        setIfExists(NOME_ABA_ACEITES, aIdx, r, 'LEAD_ID', data.leadId || '', aceitesRows, writes);
+        if (mpRow !== -1) copiarDatasDeMP(NOME_ABA_ACEITES, aIdx, r, mpRow + 1, writes);
+        stampDates(NOME_ABA_ACEITES, aIdx, r, newStatus, now, writes);
       } else {
         const baseRow = pipelineRowValues || createColdLeadBaseRow(data, pHeaders, userEmail);
         const newRow = createNewRow(baseRow, pHeaders, aHeaders, pIdx, aIdx);
@@ -1226,29 +1240,32 @@ async function updateProspect(userEmail, data) {
         if (aIdx['Servico'] !== -1) newRow[aIdx['Servico']] = servicoFromUpdate;
         if (aIdx['LEAD_ID'] !== -1) newRow[aIdx['LEAD_ID']] = data.leadId || '';
         const aAppendedRow = await appendRow(SPREADSHEET_ID, NOME_ABA_ACEITES, newRow);
-        if (mpRow !== -1) await copiarDatasDeMP(NOME_ABA_ACEITES, aIdx, aAppendedRow, mpRow + 1);
-        await stampDates(NOME_ABA_ACEITES, aIdx, aAppendedRow, newStatus, now);
+        if (mpRow !== -1) copiarDatasDeMP(NOME_ABA_ACEITES, aIdx, aAppendedRow, mpRow + 1, writes);
+        stampDates(NOME_ABA_ACEITES, aIdx, aAppendedRow, newStatus, now, writes);
       }
 
       // 3) Pipeline
       if (pRowIndex !== -1) {
         const pRow1Based = pRowIndex + 1;
-        await setIfExists(NOME_ABA_PIPELINE, pIdx, pRow1Based, 'Status_prospeccao', newStatus, pipelineRows);
-        await setIfExists(NOME_ABA_PIPELINE, pIdx, pRow1Based, 'Place_id', placeIdToUpdateOriginal, pipelineRows);
-        await setIfExists(NOME_ABA_PIPELINE, pIdx, pRow1Based, 'Place_name', data.placeName || '', pipelineRows);
-        await setIfExists(NOME_ABA_PIPELINE, pIdx, pRow1Based, 'Telefone_Place', data.telefonePlace || '', pipelineRows);
-        await setIfExists(NOME_ABA_PIPELINE, pIdx, pRow1Based, 'Servico', servicoFromUpdate, pipelineRows);
-        await setIfExists(NOME_ABA_PIPELINE, pIdx, pRow1Based, 'LEAD_ID', data.leadId || '', pipelineRows);
-        if (mpRow !== -1) await copiarDatasDeMP(NOME_ABA_PIPELINE, pIdx, pRow1Based, mpRow + 1);
-        await stampDates(NOME_ABA_PIPELINE, pIdx, pRow1Based, newStatus, now);
+        setIfExists(NOME_ABA_PIPELINE, pIdx, pRow1Based, 'Status_prospeccao', newStatus, pipelineRows, writes);
+        setIfExists(NOME_ABA_PIPELINE, pIdx, pRow1Based, 'Place_id', placeIdToUpdateOriginal, pipelineRows, writes);
+        setIfExists(NOME_ABA_PIPELINE, pIdx, pRow1Based, 'Place_name', data.placeName || '', pipelineRows, writes);
+        setIfExists(NOME_ABA_PIPELINE, pIdx, pRow1Based, 'Telefone_Place', data.telefonePlace || '', pipelineRows, writes);
+        setIfExists(NOME_ABA_PIPELINE, pIdx, pRow1Based, 'Servico', servicoFromUpdate, pipelineRows, writes);
+        setIfExists(NOME_ABA_PIPELINE, pIdx, pRow1Based, 'LEAD_ID', data.leadId || '', pipelineRows, writes);
+        if (mpRow !== -1) copiarDatasDeMP(NOME_ABA_PIPELINE, pIdx, pRow1Based, mpRow + 1, writes);
+        stampDates(NOME_ABA_PIPELINE, pIdx, pRow1Based, newStatus, now, writes);
       }
 
+      await batchWriteCells(SPREADSHEET_ID, writes);
       return { success: true, message: `Proposta marcada como "${newStatus}". Pipeline atualizado.` };
     }
 
     // ── DESISTIU / RECUSADO ───────────────────────────────────────────────────
     if (statusKey === normalizeStatus(STATUS.DESISTIU) || statusKey === normalizeStatus(STATUS.RECUSADO)) {
       if (!placeIdToUpdateClean) return { success: false, message: 'Place_Id é obrigatório para Recusa/Desistência.' };
+
+      const writes = [];
 
       // Remove de Aceites
       for (let i = 1; i < aceitesRows.length; i++) {
@@ -1269,10 +1286,10 @@ async function updateProspect(userEmail, data) {
       }
       if (mpRow !== -1) {
         const r = mpRow + 1;
-        await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Status_prospeccao', newStatus, propostasRows);
-        await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Motivo_recusa', data.motivoRecusa || '', propostasRows);
-        await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Servico', servicoFromUpdate, propostasRows);
-        await stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, newStatus, now);
+        setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Status_prospeccao', newStatus, propostasRows, writes);
+        setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Motivo_recusa', data.motivoRecusa || '', propostasRows, writes);
+        setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Servico', servicoFromUpdate, propostasRows, writes);
+        stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, newStatus, now, writes);
       } else {
         const baseRow = pipelineRowValues || createColdLeadBaseRow(data, pHeaders, userEmail);
         const newRow = createNewRow(baseRow, pHeaders, mpHeaders, pIdx, mpIdx);
@@ -1281,7 +1298,7 @@ async function updateProspect(userEmail, data) {
         if (mpIdx['Motivo_recusa'] !== -1) newRow[mpIdx['Motivo_recusa']] = data.motivoRecusa || '';
         if (mpIdx['Servico'] !== -1) newRow[mpIdx['Servico']] = servicoFromUpdate;
         const mpAppendedRowD = await appendRow(SPREADSHEET_ID, NOME_ABA_MINHAS_PROPOSTAS, newRow);
-        await stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, mpAppendedRowD, newStatus, now);
+        stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, mpAppendedRowD, newStatus, now, writes);
       }
 
       // Pipeline: reseta para Em prospecção
@@ -1298,15 +1315,18 @@ async function updateProspect(userEmail, data) {
         };
         for (const [col, val] of Object.entries(resetFields)) {
           if (pIdx[col] !== -1) {
-            await writeCell(SPREADSHEET_ID, NOME_ABA_PIPELINE, rP, pIdx[col] + 1, val);
+            writes.push({ sheetName: NOME_ABA_PIPELINE, row1: rP, col1: pIdx[col] + 1, value: val });
           }
         }
       }
 
+      await batchWriteCells(SPREADSHEET_ID, writes);
       return { success: true, message: `Marcado como "${newStatus}". Pipeline voltou para "Em prospecção".` };
     }
 
     // ── STATUS INTERMEDIÁRIOS ─────────────────────────────────────────────────
+    const writes = [];
+
     if (placeIdToUpdateClean) {
       let mpRow = -1;
       for (let i = 1; i < propostasRows.length; i++) {
@@ -1317,12 +1337,12 @@ async function updateProspect(userEmail, data) {
 
       if (mpRow !== -1) {
         const r = mpRow + 1;
-        await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Status_prospeccao', newStatus, propostasRows);
-        await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Place_id', placeIdToUpdateOriginal, propostasRows);
-        await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Servico', servicoFromUpdate, propostasRows);
-        await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Observacoes', data.observacoes || '', propostasRows);
-        await setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'LEAD_ID', data.leadId || '', propostasRows);
-        await stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, newStatus, now);
+        setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Status_prospeccao', newStatus, propostasRows, writes);
+        setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Place_id', placeIdToUpdateOriginal, propostasRows, writes);
+        setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Servico', servicoFromUpdate, propostasRows, writes);
+        setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'Observacoes', data.observacoes || '', propostasRows, writes);
+        setIfExists(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, 'LEAD_ID', data.leadId || '', propostasRows, writes);
+        stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, r, newStatus, now, writes);
       } else {
         const baseRow = pipelineRowValues || createColdLeadBaseRow(data, pHeaders, userEmail);
         const newRow = createNewRow(baseRow, pHeaders, mpHeaders, pIdx, mpIdx);
@@ -1334,28 +1354,29 @@ async function updateProspect(userEmail, data) {
         if (mpIdx['Observacoes'] !== -1) newRow[mpIdx['Observacoes']] = data.observacoes || '';
         if (mpIdx['LEAD_ID'] !== -1) newRow[mpIdx['LEAD_ID']] = data.leadId || '';
         const mpAppendedRowI = await appendRow(SPREADSHEET_ID, NOME_ABA_MINHAS_PROPOSTAS, newRow);
-        await stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, mpAppendedRowI, newStatus, now);
+        stampDates(NOME_ABA_MINHAS_PROPOSTAS, mpIdx, mpAppendedRowI, newStatus, now, writes);
       }
     }
 
     // Pipeline: atualiza campos permitidos
     if (pRowIndex !== -1) {
       const rowP = pRowIndex + 1;
-      await setIfExists(NOME_ABA_PIPELINE, pIdx, rowP, 'Observacoes', data.observacoes || '', pipelineRows);
-      await setIfExists(NOME_ABA_PIPELINE, pIdx, rowP, 'Motivo_recusa', data.motivoRecusa || '', pipelineRows);
-      await setIfExists(NOME_ABA_PIPELINE, pIdx, rowP, 'Servico', servicoFromUpdate, pipelineRows);
-      await setIfExists(NOME_ABA_PIPELINE, pIdx, rowP, 'LEAD_ID', data.leadId || '', pipelineRows);
-      await setIfExists(NOME_ABA_PIPELINE, pIdx, rowP, 'SVC', svcFromUpdate, pipelineRows);
+      setIfExists(NOME_ABA_PIPELINE, pIdx, rowP, 'Observacoes', data.observacoes || '', pipelineRows, writes);
+      setIfExists(NOME_ABA_PIPELINE, pIdx, rowP, 'Motivo_recusa', data.motivoRecusa || '', pipelineRows, writes);
+      setIfExists(NOME_ABA_PIPELINE, pIdx, rowP, 'Servico', servicoFromUpdate, pipelineRows, writes);
+      setIfExists(NOME_ABA_PIPELINE, pIdx, rowP, 'LEAD_ID', data.leadId || '', pipelineRows, writes);
+      setIfExists(NOME_ABA_PIPELINE, pIdx, rowP, 'SVC', svcFromUpdate, pipelineRows, writes);
 
       if (pIdx['Primeiro_Contato'] !== -1 && statusKey === 'em prospecção') {
         const current = pipelineRows[pRowIndex][pIdx['Primeiro_Contato']];
-        if (!current) await writeCell(SPREADSHEET_ID, NOME_ABA_PIPELINE, rowP, pIdx['Primeiro_Contato'] + 1, formatDateTimeBR(now));
+        if (!current) writes.push({ sheetName: NOME_ABA_PIPELINE, row1: rowP, col1: pIdx['Primeiro_Contato'] + 1, value: formatDateTimeBR(now) });
       }
       if (pIdx['Data_Ultimo_Contato'] !== -1) {
-        await writeCell(SPREADSHEET_ID, NOME_ABA_PIPELINE, rowP, pIdx['Data_Ultimo_Contato'] + 1, formatDateTimeBR(now));
+        writes.push({ sheetName: NOME_ABA_PIPELINE, row1: rowP, col1: pIdx['Data_Ultimo_Contato'] + 1, value: formatDateTimeBR(now) });
       }
     }
 
+    await batchWriteCells(SPREADSHEET_ID, writes);
     return { success: true, message: `Status "${newStatus}" atualizado com sucesso.` };
 
   } catch (e) {
@@ -1453,24 +1474,14 @@ async function editarRegistro(userEmail, dados) {
 
   if (rowIndex1Based === -1) return { success: false, message: 'Registro não encontrado.' };
 
-  const sheetsClient = await getSheetsClient();
-  const updates = [];
-
+  const writes = [];
   for (const [colName, valor] of Object.entries(campos)) {
     const colIndex = getColIndex(headers, colName);
     if (colIndex === -1) continue;
-    const colLetter = colToLetter(colIndex + 1);
-    updates.push(
-      sheetsClient.spreadsheets.values.update({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `${nomAba}!${colLetter}${rowIndex1Based}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[valor]] }
-      })
-    );
+    writes.push({ sheetName: nomAba, row1: rowIndex1Based, col1: colIndex + 1, value: valor });
   }
 
-  await Promise.all(updates);
+  await batchWriteCells(SPREADSHEET_ID, writes);
   cacheClear(SPREADSHEET_ID + '_' + nomAba);
   return { success: true, message: 'Campos atualizados com sucesso.' };
 }
