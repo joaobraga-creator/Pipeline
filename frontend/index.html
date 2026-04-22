@@ -2076,7 +2076,7 @@ window.onload = function() {
             saveButton.textContent = 'Salvar Alterações';
             return;
         }
-        if ((newStatus === 'Aceitou' || newStatus === 'Ativo') && (!placeId || !document.getElementById('modalPlaceName').value || !document.getElementById('modalTelefonePlace').value)) {
+        if (statusMudou && (newStatus === 'Aceitou' || newStatus === 'Ativo') && (!placeId || !document.getElementById('modalPlaceName').value || !document.getElementById('modalTelefonePlace').value)) {
             showModalMessage('Place ID, Place Name e Telefone Place são obrigatórios para os status Aceitou e Ativo.', 'error');
             saveButton.disabled = false;
             saveButton.textContent = 'Salvar Alterações';
