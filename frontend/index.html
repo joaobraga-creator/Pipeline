@@ -1160,17 +1160,13 @@
     // BRIDGE: substitui google.script.run por fetch() REST API
     // ===============================================================
     function apiCall(endpoint, data, successHandler, failureHandler) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 45000);
         fetch('/api/' + endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            signal: controller.signal,
             body: JSON.stringify(data || {})
         })
         .then(function(res) {
-            clearTimeout(timer);
             if (res.status === 401) {
                 window.location.href = '/auth/login';
                 return;
@@ -1181,7 +1177,6 @@
             if (result !== undefined && successHandler) successHandler(result);
         })
         .catch(function(err) {
-            clearTimeout(timer);
             if (failureHandler) failureHandler(err);
             else console.error('[apiCall] Erro em ' + endpoint + ':', err);
         });
@@ -1272,10 +1267,7 @@
                 populateStatusSlaDropdowns(uniqueStatusSla);
                 populateGeoIdLeadDropdown();
 
-                // Popula todas as tabelas ao carregar — evita tabela vazia ao trocar de aba
-                ['minhasProspeccoes', 'minhasPropostas', 'propostasEmAndamento'].forEach(tabId => {
-                    filterTableData(tabId);
-                });
+                filterTableData(currentActiveTabId);
 
                 renderStatusCounters('minhasProspeccoes', appData.minhasProspeccoes || []);
                 renderStatusCounters('minhasPropostas', appData.minhasPropostas || []);
@@ -2002,13 +1994,17 @@ window.onload = function() {
 
     window.updatePlaceInfoFromLeads = function(placeIdToSearch) {
         const selectedId = placeIdToSearch || document.getElementById('modalPlaceIdInput').value;
+        document.getElementById('modalPlaceName').value = '';
+        document.getElementById('modalTelefonePlace').value = '';
         if (selectedId) {
             apiCall('getPlaceInfoFromLeads', { placeId: selectedId }, function(placeInfo) {
                 if (placeInfo) {
                     document.getElementById('modalPlaceName').value = placeInfo.placeName || '';
                     document.getElementById('modalTelefonePlace').value = placeInfo.telefonePlace || '';
+                } else {
+                    document.getElementById('modalPlaceName').value = 'Não encontrado';
+                    document.getElementById('modalTelefonePlace').value = 'Não encontrado';
                 }
-                // Se não encontrado, preserva os valores existentes
             });
         }
     }
@@ -2074,9 +2070,6 @@ window.onload = function() {
         const newStatus   = document.getElementById('modalStatus').value;
         const placeId     = document.getElementById('modalPlaceIdInput').value;
 
-        const originalStatus = window._originalStatus || '';
-        const statusMudou    = originalStatus !== newStatus;
-
         // Validações básicas
         if (!newServico || newServico.trim() === '') {
             showModalMessage("O campo 'Serviço' é obrigatório.", 'error');
@@ -2084,7 +2077,7 @@ window.onload = function() {
             saveButton.textContent = 'Salvar Alterações';
             return;
         }
-        if (statusMudou && (newStatus === 'Aceitou' || newStatus === 'Ativo') && (!placeId || !document.getElementById('modalPlaceName').value || !document.getElementById('modalTelefonePlace').value)) {
+        if ((newStatus === 'Aceitou' || newStatus === 'Ativo') && (!placeId || !document.getElementById('modalPlaceName').value || !document.getElementById('modalTelefonePlace').value)) {
             showModalMessage('Place ID, Place Name e Telefone Place são obrigatórios para os status Aceitou e Ativo.', 'error');
             saveButton.disabled = false;
             saveButton.textContent = 'Salvar Alterações';
@@ -2096,6 +2089,9 @@ window.onload = function() {
             saveButton.textContent = 'Salvar Alterações';
             return;
         }
+
+        const originalStatus = window._originalStatus || '';
+        const statusMudou    = originalStatus !== newStatus;
 
         // ────────────────────────────────────────────────────────
         // CAMINHO RÁPIDO: status não mudou → grava campos simples
@@ -2117,11 +2113,14 @@ window.onload = function() {
                 Data_Logistics:   document.getElementById('modalDataLogistics').value  || null
             };
 
-            // Remove campos vazios para não sobrescrever dados existentes na planilha
-            const NAO_APAGAR_SE_VAZIO = ['Place_id','Place_name','Telefone_Place','Data_MP','Data_Treinamento','Data_Logistics'];
+            // Remove campos nulos/vazios para não sobrescrever com vazio sem querer
+            // (mantém valores existentes na planilha)
             Object.keys(campos).forEach(k => {
-                if ((campos[k] === null || campos[k] === undefined || campos[k] === '') && NAO_APAGAR_SE_VAZIO.includes(k)) {
-                    delete campos[k];
+                if (campos[k] === null || campos[k] === undefined || campos[k] === '') {
+                    // Mantém string vazia apenas para campos de texto; remove datas nulas
+                    if (['Data_MP','Data_Treinamento','Data_Logistics'].includes(k) && !campos[k]) {
+                        delete campos[k];
+                    }
                 }
             });
 
@@ -2164,8 +2163,6 @@ window.onload = function() {
                         filterTableData(currentCallingTabId);
                         setTimeout(closeModal, 1500);
                     } else {
-                        saveButton.disabled    = false;
-                        saveButton.textContent = 'Salvar Alterações';
                         showModalMessage((resp && resp.message) || 'Erro ao salvar.', 'error');
                     }
                 }, function(error) {
