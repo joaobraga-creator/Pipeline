@@ -1168,7 +1168,7 @@
         })
         .then(function(res) {
             if (res.status === 401) {
-                window.location.href = '/auth/google';
+                window.location.href = '/auth/login';
                 return;
             }
             return res.json();
