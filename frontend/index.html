@@ -1766,6 +1766,15 @@ window.onload = function() {
             return matchesGeoId && matchesStatus && matchesConsultor && matchesRegional && matchesServico && matchesSvc && matchesTelefone && matchesStatusSla && matchesDataInicio && matchesDataFim && matchesAceiteInicio && matchesAceiteFim && matchesPendencias;
         });
 
+        // Ordenação: Aceites sempre por data de aceite mais recente primeiro
+        if (tabId === 'propostasEmAndamento') {
+            filteredData.sort(function(a, b) {
+                var da = a.aceite ? new Date(a.aceite) : new Date(0);
+                var db = b.aceite ? new Date(b.aceite) : new Date(0);
+                return db - da;
+            });
+        }
+
         paginationState[tabId].currentPage = 1;
         paginationState[tabId].filteredData = filteredData;
 
