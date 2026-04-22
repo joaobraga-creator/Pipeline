@@ -2159,6 +2159,8 @@ window.onload = function() {
                         filterTableData(currentCallingTabId);
                         setTimeout(closeModal, 1500);
                     } else {
+                        saveButton.disabled    = false;
+                        saveButton.textContent = 'Salvar Alterações';
                         showModalMessage((resp && resp.message) || 'Erro ao salvar.', 'error');
                     }
                 }, function(error) {
