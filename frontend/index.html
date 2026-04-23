@@ -2077,12 +2077,6 @@ window.onload = function() {
             saveButton.textContent = 'Salvar Alterações';
             return;
         }
-        if ((newStatus === 'Aceitou' || newStatus === 'Ativo') && (!placeId || !document.getElementById('modalPlaceName').value || !document.getElementById('modalTelefonePlace').value)) {
-            showModalMessage('Place ID, Place Name e Telefone Place são obrigatórios para os status Aceitou e Ativo.', 'error');
-            saveButton.disabled = false;
-            saveButton.textContent = 'Salvar Alterações';
-            return;
-        }
         if ((newStatus === 'Recusado' || newStatus === 'Desistiu') && !document.getElementById('modalMotivoRecusa').value) {
             showModalMessage('Motivo da Recusa é obrigatório para status Recusado/Desistiu.', 'error');
             saveButton.disabled = false;
@@ -2092,6 +2086,13 @@ window.onload = function() {
 
         const originalStatus = window._originalStatus || '';
         const statusMudou    = originalStatus !== newStatus;
+
+        if (statusMudou && (newStatus === 'Aceitou' || newStatus === 'Ativo') && (!placeId || !document.getElementById('modalPlaceName').value || !document.getElementById('modalTelefonePlace').value)) {
+            showModalMessage('Place ID, Place Name e Telefone Place são obrigatórios para os status Aceitou e Ativo.', 'error');
+            saveButton.disabled = false;
+            saveButton.textContent = 'Salvar Alterações';
+            return;
+        }
 
         // ────────────────────────────────────────────────────────
         // CAMINHO RÁPIDO: status não mudou → grava campos simples
