@@ -6,13 +6,20 @@
  * tabelas. Você precisará ajustá-las para corresponder às suas tabelas reais.
  */
 const { BigQuery } = require('@google-cloud/bigquery');
+const fs = require('fs');
+const path = require('path');
 
 const bqOpts = { projectId: process.env.BIGQUERY_PROJECT_ID };
-const keyFile = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-if (keyFile) {
-  const fs = require('fs');
-  if (fs.existsSync(keyFile)) bqOpts.keyFilename = keyFile;
+
+// Tenta credencial explícita → adc_credentials.json gravado no startup → ADC do sistema
+const candidates = [
+  process.env.GOOGLE_APPLICATION_CREDENTIALS,
+  path.join(__dirname, '..', 'adc_credentials.json')
+];
+for (const f of candidates) {
+  if (f && fs.existsSync(f)) { bqOpts.keyFilename = f; break; }
 }
+
 const bq = new BigQuery(bqOpts);
 
 const DATASET = process.env.BIGQUERY_DATASET;
