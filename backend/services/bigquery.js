@@ -299,9 +299,43 @@ async function getTreinamentoByPlaceId(placeId) {
   }
 }
 
+/**
+ * Consulta BT_GO_LIVE no projeto meli-bi-data e retorna todas as linhas.
+ * Porta de dadosGoLive() do Apps Script.
+ */
+async function dadosGoLive() {
+  const bqGoLive = new BigQuery({ ...bqOpts, projectId: 'meli-bi-data' });
+
+  const query = `
+    SELECT
+      INCLUSION_DATE,
+      DUPLICATE,
+      PLC_PLACE_ID,
+      PLC_TYPE_ACTIVATION,
+      PLC_SERVICE,
+      PLC_ACTIVATION_REASON,
+      PLC_ENTRIES,
+      PLC_CITY,
+      PLC_STATE,
+      GO_LIVE_DATE,
+      TICKET_DATE,
+      APROVATION,
+      AUD_FROM_INTERFACE,
+      AUD_INS_DTTM,
+      AUD_UPD_DTTM,
+      AUD_TRANSACTION_ID
+    FROM \`meli-bi-data.WHOWNER.BT_GO_LIVE\`
+    WHERE GO_LIVE_DATE >= "2026-01-01"
+  `;
+
+  const [rows] = await bqGoLive.query({ query });
+  return rows || [];
+}
+
 module.exports = {
   obterLeadsQuentesProximos,
   searchPlaceIdsInBigQuery,
   getPlaceInfoFromLeads,
-  getTreinamentoByPlaceId
+  getTreinamentoByPlaceId,
+  dadosGoLive
 };

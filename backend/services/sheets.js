@@ -188,6 +188,9 @@ function formatSheetDate(dateValue) {
   }
   if (typeof dateValue === 'string') {
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) return dateValue;
+    // "2026-04-22 19:18:40" or "2026-04-22T19:18:40"
+    const iso = dateValue.match(/^(\d{4}-\d{2}-\d{2})[T ]/);
+    if (iso) return iso[1];
     const slash = dateValue.match(/(\d{2})\/(\d{2})\/(\d{4})/);
     if (slash) return `${slash[3]}-${slash[2]}-${slash[1]}`;
   }
@@ -1400,6 +1403,47 @@ async function editarRegistro(userEmail, dados) {
   return { success: true, message: 'Campos atualizados com sucesso.' };
 }
 
+const GOLIVE_SPREADSHEET_ID = '1GH-NsJ4EkqD91p7SLUlDYLzJDs0M_ufameiq_VcNKpo';
+const GOLIVE_TAB_NAME = 'Extração Go Live';
+
+/**
+ * Escreve linhas do BigQuery na aba "Extração Go Live" da planilha Go Live.
+ * Porta de dadosGoLive() do Apps Script.
+ */
+async function escreverDadosGoLive(rows) {
+  if (!rows || rows.length === 0) {
+    return { success: true, totalRows: 0, message: 'Nenhum dado retornado pelo BigQuery.' };
+  }
+
+  const sheetsClient = await getSheetsClient();
+
+  const headers = Object.keys(rows[0]);
+  const dataRows = rows.map(row => headers.map(h => {
+    const v = row[h];
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'object' && v.value !== undefined) return String(v.value);
+    return String(v);
+  }));
+
+  const values = [headers, ...dataRows];
+  const numCols = headers.length;
+  const lastCol = String.fromCharCode(64 + numCols);
+
+  await sheetsClient.spreadsheets.values.clear({
+    spreadsheetId: GOLIVE_SPREADSHEET_ID,
+    range: `'${GOLIVE_TAB_NAME}'!A1:${lastCol}10000`
+  });
+
+  await sheetsClient.spreadsheets.values.update({
+    spreadsheetId: GOLIVE_SPREADSHEET_ID,
+    range: `'${GOLIVE_TAB_NAME}'!A1`,
+    valueInputOption: 'RAW',
+    requestBody: { values }
+  });
+
+  return { success: true, totalRows: dataRows.length };
+}
+
 module.exports = {
   getAppData,
   getServicoOriginal,
@@ -1413,5 +1457,6 @@ module.exports = {
   deleteRowFromSheet,
   editarRegistro,
   isUserAdmin,
-  cacheClear
+  cacheClear,
+  escreverDadosGoLive
 };

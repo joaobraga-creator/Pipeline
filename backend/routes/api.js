@@ -202,6 +202,18 @@ router.post('/getTreinamentoByPlaceId', async (req, res) => {
   }
 });
 
+// ─── dadosGoLive ──────────────────────────────────────────────────────────────
+// Substitui: dadosGoLive() do Apps Script
+router.post('/dadosGoLive', async (req, res) => {
+  try {
+    const rows = await bq.dadosGoLive();
+    const result = await sheets.escreverDadosGoLive(rows);
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'dadosGoLive');
+  }
+});
+
 // ─── editarRegistro ───────────────────────────────────────────────────────────
 // Substitui: google.script.run.editarRegistro(dados)
 router.post('/editarRegistro', async (req, res) => {
