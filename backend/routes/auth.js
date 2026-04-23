@@ -26,10 +26,10 @@ function loginPage(errorMsg) {
     <h1 class="text-2xl font-bold text-gray-800 mb-2">Pipeline</h1>
     <p class="text-gray-500 text-sm mb-6">Ferramenta de Prospecção de Places</p>
     ${errorMsg ? `<p class="text-red-600 text-sm mb-4 bg-red-50 p-3 rounded-lg">${escapeHtml(errorMsg)}</p>` : ''}
-    <form method="POST" action="/auth/login" class="text-left space-y-4" id="loginForm">
+    <form method="POST" action="/auth/login" class="text-left space-y-4">
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
-        <input type="email" name="email" required autocomplete="email" id="emailInput"
+        <input type="email" name="email" required autocomplete="email"
                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
       </div>
       <div>
@@ -37,28 +37,12 @@ function loginPage(errorMsg) {
         <input type="password" name="password" required autocomplete="current-password"
                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
       </div>
-      <button type="submit" id="submitBtn"
-              class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200 flex items-center justify-center gap-2">
-        <span id="btnText">Entrar</span>
-        <svg id="spinner" class="hidden animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
-        </svg>
+      <button type="submit"
+              class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200">
+        Entrar
       </button>
     </form>
   </div>
-  <script>
-    document.getElementById('loginForm').addEventListener('submit', function() {
-      var btn = document.getElementById('submitBtn');
-      var text = document.getElementById('btnText');
-      var spinner = document.getElementById('spinner');
-      btn.disabled = true;
-      btn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
-      btn.classList.add('bg-blue-400', 'cursor-not-allowed');
-      text.textContent = 'Carregando...';
-      spinner.classList.remove('hidden');
-    });
-  </script>
 </body>
 </html>`;
 }

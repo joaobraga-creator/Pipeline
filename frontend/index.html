@@ -1766,15 +1766,6 @@ window.onload = function() {
             return matchesGeoId && matchesStatus && matchesConsultor && matchesRegional && matchesServico && matchesSvc && matchesTelefone && matchesStatusSla && matchesDataInicio && matchesDataFim && matchesAceiteInicio && matchesAceiteFim && matchesPendencias;
         });
 
-        // Ordenação: Aceites sempre por data de aceite mais recente primeiro
-        if (tabId === 'propostasEmAndamento') {
-            filteredData.sort(function(a, b) {
-                var da = a.aceite ? new Date(a.aceite) : new Date(0);
-                var db = b.aceite ? new Date(b.aceite) : new Date(0);
-                return db - da;
-            });
-        }
-
         paginationState[tabId].currentPage = 1;
         paginationState[tabId].filteredData = filteredData;
 
@@ -2079,9 +2070,6 @@ window.onload = function() {
         const newStatus   = document.getElementById('modalStatus').value;
         const placeId     = document.getElementById('modalPlaceIdInput').value;
 
-        const originalStatus = window._originalStatus || '';
-        const statusMudou    = originalStatus !== newStatus;
-
         // Validações básicas
         if (!newServico || newServico.trim() === '') {
             showModalMessage("O campo 'Serviço' é obrigatório.", 'error');
@@ -2089,7 +2077,7 @@ window.onload = function() {
             saveButton.textContent = 'Salvar Alterações';
             return;
         }
-        if (statusMudou && (newStatus === 'Aceitou' || newStatus === 'Ativo') && (!placeId || !document.getElementById('modalPlaceName').value || !document.getElementById('modalTelefonePlace').value)) {
+        if ((newStatus === 'Aceitou' || newStatus === 'Ativo') && (!placeId || !document.getElementById('modalPlaceName').value || !document.getElementById('modalTelefonePlace').value)) {
             showModalMessage('Place ID, Place Name e Telefone Place são obrigatórios para os status Aceitou e Ativo.', 'error');
             saveButton.disabled = false;
             saveButton.textContent = 'Salvar Alterações';
@@ -2101,6 +2089,9 @@ window.onload = function() {
             saveButton.textContent = 'Salvar Alterações';
             return;
         }
+
+        const originalStatus = window._originalStatus || '';
+        const statusMudou    = originalStatus !== newStatus;
 
         // ────────────────────────────────────────────────────────
         // CAMINHO RÁPIDO: status não mudou → grava campos simples
