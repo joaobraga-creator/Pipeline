@@ -11,8 +11,9 @@ const path = require('path');
 
 const bqOpts = { projectId: process.env.BIGQUERY_PROJECT_ID };
 
-// Tenta credencial explícita → adc_credentials.json gravado no startup → ADC do sistema
+// Tenta: service_account.json → credencial explícita → adc_credentials.json → ADC do sistema
 const candidates = [
+  path.join(__dirname, '..', 'service_account.json'),
   process.env.GOOGLE_APPLICATION_CREDENTIALS,
   path.join(__dirname, '..', 'adc_credentials.json')
 ];

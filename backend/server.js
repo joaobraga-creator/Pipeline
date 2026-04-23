@@ -16,6 +16,11 @@ if (process.env.NODE_ENV === 'production') {
     fs.writeFileSync(path.join(__dirname, 'adc_credentials.json'), adc, 'utf8');
     console.log('[Startup] adc_credentials.json gravado a partir de GOOGLE_ADC_CREDENTIALS');
   }
+  if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    const sa = JSON.stringify(JSON.parse(cleanJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON)));
+    fs.writeFileSync(path.join(__dirname, 'service_account.json'), sa, 'utf8');
+    console.log('[Startup] service_account.json gravado a partir de GOOGLE_SERVICE_ACCOUNT_JSON');
+  }
 }
 
 const express = require('express');
