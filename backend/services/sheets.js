@@ -263,7 +263,7 @@ async function appendRow(spreadsheetId, sheetName, rowData) {
   await sheets.spreadsheets.values.append({
     spreadsheetId,
     range: `${sheetName}!A1`,
-    valueInputOption: 'USER_ENTERED',
+    valueInputOption: 'RAW',
     insertDataOption: 'INSERT_ROWS',
     requestBody: { values: [rowData] }
   });
@@ -871,6 +871,28 @@ async function atualizarCamposSimples(userEmail, data) {
   const campos = data.campos || {};
   let atualizados = 0;
 
+  // ── Admin: altera Consultor e propaga a todas as abas ────────────────────────
+  if (isAdmin && campos.Consultor) {
+    const novoConsultor = String(campos.Consultor).trim();
+    if (novoConsultor) {
+      for (const sheetName of [NOME_ABA_PIPELINE, NOME_ABA_MINHAS_PROPOSTAS, NOME_ABA_ACEITES]) {
+        const shRows = await readSheet(SPREADSHEET_ID, sheetName);
+        const shHeaders = shRows[0] || [];
+        const shGeoC  = getColIndex(shHeaders, 'Geo_Id');
+        const shConsC = getColIndex(shHeaders, 'Consultor');
+        if (shGeoC === -1 || shConsC === -1) continue;
+        for (let i = 1; i < shRows.length; i++) {
+          if (String(shRows[i][shGeoC] || '').trim() === geoIdBusca) {
+            await writeCell(SPREADSHEET_ID, sheetName, i + 1, shConsC + 1, novoConsultor);
+            break;
+          }
+        }
+      }
+      atualizados++;
+    }
+    delete campos.Consultor; // evita dupla escrita abaixo
+  }
+
   for (const colName of Object.keys(campos)) {
     if (PROTEGIDAS.has(colName)) continue;
     const colIdx0 = getColIndex(headers, colName);
@@ -1069,7 +1091,10 @@ async function updateProspect(userEmail, data) {
         const pi = srcIdx[col]; const ni = dstIdx[col];
         if (pi !== -1 && ni !== -1) {
           if (col === 'Lat_geo' || col === 'Long_geo') {
-            newRow[ni] = formatCoordinateAsString(baseRow[pi]);
+            // Copia a string exata da Pipeline sem converter para float,
+            // para não perder precisão nem criar formato errado.
+            const rawCoord = String(baseRow[pi] || '').trim().replace(',', '.');
+            newRow[ni] = rawCoord;
           } else {
             newRow[ni] = baseRow[pi];
           }
