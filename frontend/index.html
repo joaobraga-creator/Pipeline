@@ -2634,6 +2634,7 @@ window.onload = function() {
         apiCall('obterLeadsQuentesProximos', coordsData, function(response) {
                 if (response.success) {
                     if (response.data.length > 0) {
+                        window._bqLeadsData = []; // limpa dados da busca anterior
                         let tableHtml = '<table class="min-w-full divide-y divide-gray-200"><thead class="bg-mlblue text-white"><tr>';
                         
                         // ADICIONANDO CABEÇALHO PARA STATUS_SLA
@@ -2697,6 +2698,18 @@ window.onload = function() {
                             // NOVO: captura e-mail e data de cadastro para disparo de e-mail de prospecção
                             const emailLeadVal      = (response.headers.indexOf('SHP_PROSP_REG_EMAIL_DESC') !== -1) ? (row[response.headers.indexOf('SHP_PROSP_REG_EMAIL_DESC')] || '') : '';
                             const dataCadastroVal   = (response.headers.indexOf('DATA_CADASTRO') !== -1) ? (row[response.headers.indexOf('DATA_CADASTRO')] || '') : '';
+                            // Guarda os dados do lead num array global para evitar problemas
+                            // com aspas/caracteres especiais em onclick inline.
+                            if (!window._bqLeadsData) window._bqLeadsData = [];
+                            const leadIdx = window._bqLeadsData.length;
+                            window._bqLeadsData.push({
+                                placeId, placeName, telefonePlace,
+                                latitudeLead, longitudeLead, geoIdFromSelectedDropdown,
+                                shpRespNameLead: shpRespNameLead || '',
+                                tipoLead, svcLead, cnpjLead,
+                                enderecoCompletoLead, emailLeadVal, dataCadastroVal
+                            });
+
                             tableHtml += `<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                                 <div class="action-dropdown">
                                                     <button class="bg-mlblue hover:bg-blue-700 text-white font-medium py-1 px-3 rounded-md text-xs inline-flex items-center">
@@ -2707,7 +2720,7 @@ window.onload = function() {
                             leadActionStatuses.forEach(status => {
                                 let iconClass = 'fa-arrow-right';
                                 if (status === 'Em prospecção') iconClass = 'fa-compass';
-                                tableHtml += `<a onclick="handleLeadAction('${placeId}', '${escapeHtml(placeName)}', '${telefonePlace}', '${latitudeLead}', '${longitudeLead}', '${geoIdFromSelectedDropdown}', '${escapeHtml(shpRespNameLead || '')}', '${tipoLead}', '${svcLead}', '${escapeHtml(cnpjLead)}', '${escapeHtml(enderecoCompletoLead)}', '${status}', '${escapeHtml(emailLeadVal)}', '${escapeHtml(dataCadastroVal)}')">
+                                tableHtml += `<a onclick="handleLeadActionByIdx(${leadIdx}, '${status}')">
                                                         <i class="fas ${iconClass} mr-2"></i> Marcar como '${status}'
                                                     </a>`;
                             });
@@ -2905,6 +2918,19 @@ window.onload = function() {
             console.warn('[_repaintAllContactedRows_] Erro:', e);
         }
     }
+
+    // Wrapper que lê os dados do array global para evitar problemas com caracteres especiais no onclick
+    window.handleLeadActionByIdx = function(idx, newStatus) {
+        const d = (window._bqLeadsData || [])[idx];
+        if (!d) return;
+        handleLeadAction(
+            d.placeId, d.placeName, d.telefonePlace,
+            d.latitudeLead, d.longitudeLead, d.geoIdFromSelectedDropdown,
+            d.shpRespNameLead, d.tipoLead, d.svcLead,
+            d.cnpjLead, d.enderecoCompletoLead,
+            newStatus, d.emailLeadVal, d.dataCadastroVal
+        );
+    };
 
     window.handleLeadAction = function(placeId, placeName, telefonePlace, latitudeLead, longitudeLead, geoIdFromSelectedDropdown, shpRespNameLead, tipoLead, svcLead, cnpjLead, enderecoCompletoLead, newStatus, emailLead, dataCadastroLead) {
         // Atualiza card de Lead selecionado (CNPJ / Endereço completo)
