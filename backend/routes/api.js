@@ -225,4 +225,197 @@ router.post('/editarRegistro', async (req, res) => {
   }
 });
 
+// ─── dadosLogistics ───────────────────────────────────────────────────────────
+// Substitui: dadosLogistics() do Apps Script
+router.post('/dadosLogistics', async (req, res) => {
+  try {
+    const rows = await bq.dadosLogistics();
+    const result = await sheets.escreverDadosLogistics(rows);
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'dadosLogistics');
+  }
+});
+
+// ─── dadosMercadopago ─────────────────────────────────────────────────────────
+// Substitui: dadosMercadopago() do Apps Script
+router.post('/dadosMercadopago', async (req, res) => {
+  try {
+    const rows = await bq.dadosMercadopago();
+    const result = await sheets.escreverDadosMercadopago(rows);
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'dadosMercadopago');
+  }
+});
+
+// ─── dadosNewPlace ────────────────────────────────────────────────────────────
+// Substitui: dadosNewPlace() do Apps Script
+router.post('/dadosNewPlace', async (req, res) => {
+  try {
+    const rows = await bq.dadosNewPlace();
+    const result = await sheets.escreverDadosNewPlace(rows);
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'dadosNewPlace');
+  }
+});
+
+// ─── treinamentoB ─────────────────────────────────────────────────────────────
+// Substitui: treinamentoB() do Apps Script
+router.post('/treinamentoB', async (req, res) => {
+  try {
+    const rows = await bq.treinamentoB();
+    const result = await sheets.escreverDadosTreinamento(rows);
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'treinamentoB');
+  }
+});
+
+// ─── dadosVolumetria ──────────────────────────────────────────────────────────
+// Substitui: dadosVolumetria_Revisado() do Apps Script
+router.post('/dadosVolumetria', async (req, res) => {
+  try {
+    const rows = await bq.dadosVolumetria();
+    const result = await sheets.escreverDadosVolumetria(rows);
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'dadosVolumetria');
+  }
+});
+
+// ─── dadosSBO ─────────────────────────────────────────────────────────────────
+// Substitui: dadosSBO() do Apps Script
+router.post('/dadosSBO', async (req, res) => {
+  try {
+    const rows = await bq.dadosSBO();
+    const result = await sheets.escreverDadosSBO(rows);
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'dadosSBO');
+  }
+});
+
+// ─── contarContatosPorGeoID ───────────────────────────────────────────────────
+// Substitui: contarContatosPorGeoID() do Apps Script
+router.post('/contarContatosPorGeoID', async (req, res) => {
+  try {
+    const result = await sheets.contarContatosPorGeoID();
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'contarContatosPorGeoID');
+  }
+});
+
+// ─── preencherSVCMaisProximo ──────────────────────────────────────────────────
+// Substitui: preencherSVCMaisProximo() do Apps Script
+router.post('/preencherSVCMaisProximo', async (req, res) => {
+  try {
+    const result = await sheets.preencherSVCMaisProximo();
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'preencherSVCMaisProximo');
+  }
+});
+
+// ─── preencherMultiplasAbas ───────────────────────────────────────────────────
+// Substitui: preencherMultiplasAbas() do Apps Script
+router.post('/preencherMultiplasAbas', async (req, res) => {
+  try {
+    const result = await sheets.preencherMultiplasAbas();
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'preencherMultiplasAbas');
+  }
+});
+
+// ─── preencherDataLogistics ───────────────────────────────────────────────────
+// Substitui: preencherDataLogistics() do Apps Script
+router.post('/preencherDataLogistics', async (req, res) => {
+  try {
+    const result = await sheets.preencherDataLogistics();
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'preencherDataLogistics');
+  }
+});
+
+// ─── updateGoLiveDates ────────────────────────────────────────────────────────
+// Substitui: updateGoLiveDatess() do Apps Script
+router.post('/updateGoLiveDates', async (req, res) => {
+  try {
+    const result = await sheets.updateGoLiveDates();
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'updateGoLiveDates');
+  }
+});
+
+// ─── syncDataPipeline ─────────────────────────────────────────────────────────
+// Substitui: syncData() do Apps Script
+router.post('/syncDataPipeline', async (req, res) => {
+  try {
+    const result = await sheets.syncDataPipeline();
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'syncDataPipeline');
+  }
+});
+
+// ─── sincronizarAceitesPorGeoId ───────────────────────────────────────────────
+// Substitui: sincronizarAceitesPorGeoId() do Apps Script
+router.post('/sincronizarAceitesPorGeoId', async (req, res) => {
+  try {
+    const result = await sheets.sincronizarAceitesPorGeoId();
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'sincronizarAceitesPorGeoId');
+  }
+});
+
+// ─── atualizarTodasDatasPendentes ─────────────────────────────────────────────
+// Substitui: atualizarTodasDatasPendentes() do Apps Script
+router.post('/atualizarTodasDatasPendentes', async (req, res) => {
+  try {
+    const result = await sheets.atualizarTodasDatasPendentes();
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'atualizarTodasDatasPendentes');
+  }
+});
+
+// ─── pipelineJobHourly ────────────────────────────────────────────────────────
+// Substitui: pipelineJobHourly() do Apps Script (preenche CEP e Bairro via Google Maps)
+router.post('/pipelineJobHourly', async (req, res) => {
+  try {
+    const result = await sheets.pipelineJobHourly();
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'pipelineJobHourly');
+  }
+});
+
+// ─── atualizarFinalSemana ─────────────────────────────────────────────────────
+// Substitui: atualizarFinalSemana() do Apps Script (preenche horário de sábado)
+router.post('/atualizarFinalSemana', async (req, res) => {
+  try {
+    const result = await sheets.atualizarFinalSemana();
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'atualizarFinalSemana');
+  }
+});
+
+// ─── sincronizarBigQuery ──────────────────────────────────────────────────────
+// Substitui: syncSheets_UpsertSemApagarAusentes() do Apps Script
+router.post('/sincronizarBigQuery', async (req, res) => {
+  try {
+    const result = await sheets.executarSincronizacaoBigQuery();
+    res.json(result);
+  } catch (e) {
+    handleError(res, e, 'sincronizarBigQuery');
+  }
+});
+
 module.exports = router;

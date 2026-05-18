@@ -1469,6 +1469,826 @@ async function escreverDadosGoLive(rows) {
   return { success: true, totalRows: dataRows.length };
 }
 
+// ─── Escrita genérica de dados BQ em aba ─────────────────────────────────────
+/**
+ * Limpa e reescreve uma aba da planilha com rows vindas do BigQuery.
+ * rows: array de objetos (retorno do bq.query)
+ */
+async function escreverDadosBQParaAba(rows, tabName, spreadsheetId) {
+  const ssId = spreadsheetId || SPREADSHEET_ID;
+  if (!rows || rows.length === 0) {
+    return { success: true, totalRows: 0, message: 'Nenhum dado retornado pelo BigQuery.' };
+  }
+  const sheetsClient = await getSheetsClient();
+  const headers = Object.keys(rows[0]);
+  const dataRows = rows.map(row => headers.map(h => {
+    const v = row[h];
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'object' && v.value !== undefined) return String(v.value);
+    if (v instanceof Date) return v.toISOString().substring(0, 10);
+    return String(v);
+  }));
+  const values = [headers, ...dataRows];
+  const numCols = headers.length;
+  const lastColLetter = colToLetter(numCols);
+  await sheetsClient.spreadsheets.values.clear({
+    spreadsheetId: ssId,
+    range: `'${tabName}'!A1:${lastColLetter}100000`
+  });
+  await sheetsClient.spreadsheets.values.update({
+    spreadsheetId: ssId,
+    range: `'${tabName}'!A1`,
+    valueInputOption: 'RAW',
+    requestBody: { values }
+  });
+  return { success: true, totalRows: dataRows.length };
+}
+
+async function escreverDadosLogistics(rows)    { return escreverDadosBQParaAba(rows, 'Logistics'); }
+async function escreverDadosMercadopago(rows)  { return escreverDadosBQParaAba(rows, 'Mercado Pago'); }
+async function escreverDadosNewPlace(rows)     { return escreverDadosBQParaAba(rows, 'NEW_PLACE'); }
+async function escreverDadosTreinamento(rows)  { return escreverDadosBQParaAba(rows, 'Treinamento'); }
+async function escreverDadosVolumetria(rows)   { return escreverDadosBQParaAba(rows, 'Base'); }
+async function escreverDadosSBO(rows)          { return escreverDadosBQParaAba(rows, 'Extração SBO1'); }
+
+// ─── Batch write helper ───────────────────────────────────────────────────────
+async function batchWriteRanges(spreadsheetId, dataRanges) {
+  if (!dataRanges || dataRanges.length === 0) return;
+  const sheetsClient = await getSheetsClient();
+  await sheetsClient.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: dataRanges
+    }
+  });
+}
+
+// ─── contarContatosPorGeoID ───────────────────────────────────────────────────
+// Porta de contarContatosPorGeoID() do Apps Script.
+async function contarContatosPorGeoID() {
+  const [pipelineRows, propostasRows] = await Promise.all([
+    readSheet(SPREADSHEET_ID, NOME_ABA_PIPELINE),
+    readSheet(SPREADSHEET_ID, NOME_ABA_MINHAS_PROPOSTAS)
+  ]);
+
+  if (propostasRows.length < 2 || pipelineRows.length < 2) {
+    return { success: false, message: 'Abas sem dados suficientes.' };
+  }
+
+  // Conta ocorrências de Geo_Id em Minhas Propostas (col A)
+  const contagem = {};
+  for (let i = 1; i < propostasRows.length; i++) {
+    const geoId = String(propostasRows[i][0] || '').trim();
+    if (geoId) contagem[geoId] = (contagem[geoId] || 0) + 1;
+  }
+
+  // Atualiza col V (índice 21) do Pipeline
+  const pHeaders  = pipelineRows[0] || [];
+  const cGeo      = getColIndex(pHeaders, 'Geo_Id');
+  const cContatos = getColIndex(pHeaders, 'Contatos_Feitos');
+  if (cGeo === -1 || cContatos === -1) {
+    return { success: false, message: 'Colunas Geo_Id ou Contatos_Feitos não encontradas no Pipeline.' };
+  }
+
+  const novoValores = [];
+  for (let i = 1; i < pipelineRows.length; i++) {
+    const geoId = String(pipelineRows[i][cGeo] || '').trim();
+    novoValores.push([geoId ? (contagem[geoId] || 0) : 0]);
+  }
+
+  const colLetter = colToLetter(cContatos + 1);
+  await batchWriteRanges(SPREADSHEET_ID, [{
+    range: `${NOME_ABA_PIPELINE}!${colLetter}2:${colLetter}${pipelineRows.length}`,
+    values: novoValores
+  }]);
+
+  return { success: true, message: `${novoValores.length} registros atualizados.` };
+}
+
+// ─── preencherSVCMaisProximo ──────────────────────────────────────────────────
+// Porta de preencherSVCMaisProximo() do Apps Script.
+function _haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+async function preencherSVCMaisProximo() {
+  const svcRows = await readSheet(SPREADSHEET_ID, 'SVC');
+  if (svcRows.length < 2) return { success: false, message: 'Aba SVC vazia.' };
+
+  const svcList = [];
+  for (let i = 1; i < svcRows.length; i++) {
+    const lat = parseFloat(svcRows[i][0]);
+    const lon = parseFloat(svcRows[i][1]);
+    if (!isNaN(lat) && !isNaN(lon)) {
+      svcList.push({ lat, lon, id: svcRows[i][2], regional: svcRows[i][3] });
+    }
+  }
+  if (!svcList.length) return { success: false, message: 'Nenhum SVC válido.' };
+
+  const ABAS = [NOME_ABA_PIPELINE, NOME_ABA_ACEITES, NOME_ABA_MINHAS_PROPOSTAS];
+  const updates = {};
+  let totalLinhas = 0;
+
+  for (const nomeAba of ABAS) {
+    const rows = await readSheet(SPREADSHEET_ID, nomeAba);
+    if (rows.length < 2) continue;
+    const headers  = rows[0];
+    const cLat     = getColIndex(headers, 'Lat_geo');
+    const cLon     = getColIndex(headers, 'Long_geo');
+    const cRegion  = getColIndex(headers, 'Regional');
+    const cSVC     = getColIndex(headers, 'SVC');
+    if (cLat === -1 || cLon === -1) continue;
+
+    const colH = [], colN = [];
+    for (let i = 1; i < rows.length; i++) {
+      const lat = parseFloat(rows[i][cLat]);
+      const lon = parseFloat(rows[i][cLon]);
+      if (isNaN(lat) || isNaN(lon)) { colH.push(['']); colN.push(['']); continue; }
+
+      let minDist = Infinity, nearest = null;
+      for (const s of svcList) {
+        const d = _haversine(lat, lon, s.lat, s.lon);
+        if (d < minDist) { minDist = d; nearest = s; }
+      }
+      colH.push([nearest ? nearest.regional : '']);
+      colN.push([nearest ? nearest.id : '']);
+    }
+
+    const dataToWrite = [];
+    if (cRegion !== -1) {
+      dataToWrite.push({ range: `${nomeAba}!${colToLetter(cRegion+1)}2:${colToLetter(cRegion+1)}${rows.length}`, values: colH });
+    }
+    if (cSVC !== -1) {
+      dataToWrite.push({ range: `${nomeAba}!${colToLetter(cSVC+1)}2:${colToLetter(cSVC+1)}${rows.length}`, values: colN });
+    }
+    if (dataToWrite.length) await batchWriteRanges(SPREADSHEET_ID, dataToWrite);
+    totalLinhas += rows.length - 1;
+  }
+
+  return { success: true, message: `${totalLinhas} linhas processadas.` };
+}
+
+// ─── preencherMultiplasAbas ───────────────────────────────────────────────────
+// Porta de preencherMultiplasAbas() do Apps Script.
+// Preenche Place_ID (col K) nas abas com base em LEAD_ID (col AH) da aba NEW_PLACE.
+async function preencherMultiplasAbas() {
+  const newPlaceRows = await readSheet(SPREADSHEET_ID, 'NEW_PLACE');
+  if (newPlaceRows.length < 2) return { success: false, message: 'Aba NEW_PLACE vazia.' };
+
+  const placeIdMap = new Map();
+  for (let i = 1; i < newPlaceRows.length; i++) {
+    const leadId  = newPlaceRows[i][0]; // col A = LEAD_ID
+    const placeId = newPlaceRows[i][1]; // col B = PLACE_ID
+    if (leadId !== '' && leadId != null && placeId !== '' && placeId != null) {
+      placeIdMap.set(String(leadId).trim(), placeId);
+    }
+  }
+
+  let totalPreenchidos = 0;
+  for (const nomeAba of [NOME_ABA_ACEITES, NOME_ABA_PIPELINE, NOME_ABA_MINHAS_PROPOSTAS]) {
+    const rows = await readSheet(SPREADSHEET_ID, nomeAba);
+    if (rows.length < 2) continue;
+    const headers   = rows[0];
+    const cPlaceId  = getColIndex(headers, 'Place_id');
+    const cLeadId   = getColIndex(headers, 'LEAD_ID');
+    if (cPlaceId === -1 || cLeadId === -1) continue;
+
+    const newPlaceIds = [];
+    for (let i = 1; i < rows.length; i++) {
+      const leadIdRaw = rows[i][cLeadId];
+      const existPlaceId = rows[i][cPlaceId];
+      if (leadIdRaw !== '' && leadIdRaw != null) {
+        const found = placeIdMap.get(String(leadIdRaw).trim());
+        if (found !== undefined) { newPlaceIds.push([found]); totalPreenchidos++; continue; }
+      }
+      newPlaceIds.push([existPlaceId]);
+    }
+    await batchWriteRanges(SPREADSHEET_ID, [{
+      range: `${nomeAba}!${colToLetter(cPlaceId+1)}2:${colToLetter(cPlaceId+1)}${rows.length}`,
+      values: newPlaceIds
+    }]);
+  }
+
+  return { success: true, message: `${totalPreenchidos} Place_IDs preenchidos.` };
+}
+
+// ─── preencherDataLogistics ───────────────────────────────────────────────────
+// Porta de preencherDataLogistics() do Apps Script.
+// Preenche Aceites col R (Data_Logistics) a partir da planilha externa Logistics DC.
+const EXT_LOGISTICS_DC_SS_ID = '1h4DbreIAFfpuedV4x4bgBtSunC9leHhUXTyVnTh_thA';
+
+async function preencherDataLogistics() {
+  const [aceitesRows, logisticsRows] = await Promise.all([
+    readSheet(SPREADSHEET_ID, NOME_ABA_ACEITES),
+    readSheet(EXT_LOGISTICS_DC_SS_ID, 'Logistics DC')
+  ]);
+  if (aceitesRows.length < 2) return { success: false, message: 'Aba Aceites vazia.' };
+  if (logisticsRows.length < 2) return { success: false, message: 'Aba Logistics DC não encontrada.' };
+
+  // Mapa: place_id → data (col B=idx1, data=col M=idx12 → mas o script usa idx12 para data)
+  const mapaLogistics = {};
+  for (let i = 1; i < logisticsRows.length; i++) {
+    const placeId = logisticsRows[i][1]; // col B (idx 1)
+    const data    = logisticsRows[i][12]; // col M (idx 12)
+    if (placeId) mapaLogistics[String(placeId).trim()] = data;
+  }
+
+  const aHeaders = aceitesRows[0] || [];
+  const cPlaceId = getColIndex(aHeaders, 'Place_id');
+  const cDataLog = getColIndex(aHeaders, 'Data_Logistics');
+  if (cPlaceId === -1 || cDataLog === -1) {
+    return { success: false, message: 'Colunas Place_id ou Data_Logistics não encontradas em Aceites.' };
+  }
+
+  const novosDados = [];
+  for (let i = 1; i < aceitesRows.length; i++) {
+    const placeId = String(aceitesRows[i][cPlaceId] || '').trim();
+    const atual   = aceitesRows[i][cDataLog];
+    if (!atual && placeId && mapaLogistics[placeId]) {
+      const d = mapaLogistics[placeId];
+      novosDados.push([d instanceof Date ? d.toISOString().substring(0, 10) : String(d || '')]);
+    } else {
+      novosDados.push([atual !== undefined && atual !== null ? atual : '']);
+    }
+  }
+
+  await batchWriteRanges(SPREADSHEET_ID, [{
+    range: `${NOME_ABA_ACEITES}!${colToLetter(cDataLog+1)}2:${colToLetter(cDataLog+1)}${aceitesRows.length}`,
+    values: novosDados
+  }]);
+
+  return { success: true, message: `${aceitesRows.length - 1} linhas processadas.` };
+}
+
+// ─── updateGoLiveDates ────────────────────────────────────────────────────────
+// Porta de updateGoLiveDatess() do Apps Script.
+const EXT_GOLIVE_SS_ID = '1g9NjIriwwqU5Dew8I5cH03NRjQy2Q5xJJIYiON26O5g';
+
+async function updateGoLiveDates() {
+  const srcRows = await readSheet(EXT_GOLIVE_SS_ID, 'Go_Live');
+  if (srcRows.length < 2) return { success: false, message: 'Planilha externa Go_Live vazia.' };
+
+  // Mapa: id (col C=idx2) → { date: col K=idx9, approval: col M=idx11 }
+  const srcMap = {};
+  for (let i = 1; i < srcRows.length; i++) {
+    const id = srcRows[i][2]; // col C
+    if (id) {
+      srcMap[String(id).trim()] = {
+        date:     srcRows[i][9],  // col J → 10th col = idx 9
+        approval: srcRows[i][11]  // col L → 12th col = idx 11
+      };
+    }
+  }
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  let totalUpdated = 0;
+
+  for (const nomeAba of [NOME_ABA_ACEITES, NOME_ABA_PIPELINE, NOME_ABA_MINHAS_PROPOSTAS]) {
+    const rows = await readSheet(SPREADSHEET_ID, nomeAba);
+    if (rows.length < 2) continue;
+    const headers    = rows[0];
+    const cPlaceId   = getColIndex(headers, 'Place_id');
+    const cGoLive    = getColIndex(headers, 'Go_Live');
+    const cStatus    = getColIndex(headers, 'Status_prospeccao');
+    if (cPlaceId === -1 || cGoLive === -1 || cStatus === -1) continue;
+
+    const updates = [];
+    for (let i = 1; i < rows.length; i++) {
+      const placeId = String(rows[i][cPlaceId] || '').trim();
+      if (!placeId || !srcMap[placeId]) continue;
+      const { date: extDate, approval } = srcMap[placeId];
+      if (!extDate) continue;
+      const extDateObj = extDate instanceof Date ? extDate : new Date(extDate);
+      if (isNaN(extDateObj.getTime())) continue;
+      const formattedDate = formatSheetDate(extDateObj);
+
+      let newStatus = String(rows[i][cStatus] || '').trim();
+      const approvalStr = String(approval || '').trim();
+
+      if (approvalStr === 'Aprovado' && extDateObj <= today && newStatus !== 'Ativo') {
+        newStatus = 'Ativo';
+      } else if (approvalStr === 'Pendente' && extDateObj < today && newStatus !== 'Activación pendiente') {
+        newStatus = 'Activación pendiente';
+      }
+
+      updates.push({ row: i + 1, goLive: formattedDate, status: newStatus });
+      totalUpdated++;
+    }
+
+    const sheetsClient = await getSheetsClient();
+    for (const upd of updates) {
+      await sheetsClient.spreadsheets.values.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        requestBody: {
+          valueInputOption: 'RAW',
+          data: [
+            { range: `${nomeAba}!${colToLetter(cGoLive+1)}${upd.row}`, values: [[upd.goLive]] },
+            { range: `${nomeAba}!${colToLetter(cStatus+1)}${upd.row}`, values: [[upd.status]] }
+          ]
+        }
+      });
+    }
+  }
+
+  return { success: true, message: `${totalUpdated} linhas atualizadas.` };
+}
+
+// ─── syncDataPipeline ─────────────────────────────────────────────────────────
+// Porta de syncData() do Apps Script.
+// Sincroniza data de solicitação da planilha externa → Pipeline col O (Data_Solicitacao)
+const EXT_PROSPECCAO_COORD_SS_ID = process.env.EXTERNAL_PROSPECCAO_SHEET_ID;
+const EXT_PROSPECCAO_COORD_SHEET = process.env.EXTERNAL_PROSPECCAO_SHEET_NAME || 'Prospecção de Coordenadas';
+
+async function syncDataPipeline() {
+  if (!EXT_PROSPECCAO_COORD_SS_ID) {
+    return { success: false, message: 'EXTERNAL_PROSPECCAO_SHEET_ID não configurado.' };
+  }
+  const [srcRows, pipelineRows] = await Promise.all([
+    readSheet(EXT_PROSPECCAO_COORD_SS_ID, EXT_PROSPECCAO_COORD_SHEET),
+    readSheet(SPREADSHEET_ID, NOME_ABA_PIPELINE)
+  ]);
+  if (pipelineRows.length < 2) return { success: false, message: 'Pipeline vazio.' };
+
+  // Mapa: geoId (col B=idx1) → timestamp (col C=idx2)
+  const mapaOrigem = new Map();
+  for (let i = 1; i < srcRows.length; i++) {
+    const geoId = srcRows[i][1];
+    const ts    = srcRows[i][2];
+    if (geoId) mapaOrigem.set(String(geoId).trim(), ts);
+  }
+
+  const pHeaders   = pipelineRows[0] || [];
+  const cGeo       = getColIndex(pHeaders, 'Geo_Id');
+  const cDataSol   = getColIndex(pHeaders, 'Data_Solicitacao');
+  if (cGeo === -1 || cDataSol === -1) {
+    return { success: false, message: 'Colunas Geo_Id ou Data_Solicitacao não encontradas.' };
+  }
+
+  const newValues = [];
+  for (let i = 1; i < pipelineRows.length; i++) {
+    const geoId   = String(pipelineRows[i][cGeo] || '').trim();
+    const existing = pipelineRows[i][cDataSol];
+    if (!existing && mapaOrigem.has(geoId)) {
+      const ts = mapaOrigem.get(geoId);
+      newValues.push([ts instanceof Date ? ts.toISOString() : String(ts || '')]);
+    } else {
+      newValues.push([existing !== undefined && existing !== null ? existing : '']);
+    }
+  }
+
+  await batchWriteRanges(SPREADSHEET_ID, [{
+    range: `${NOME_ABA_PIPELINE}!${colToLetter(cDataSol+1)}2:${colToLetter(cDataSol+1)}${pipelineRows.length}`,
+    values: newValues
+  }]);
+
+  return { success: true, message: `${pipelineRows.length - 1} linhas processadas.` };
+}
+
+// ─── sincronizarAceitesPorGeoId ───────────────────────────────────────────────
+// Porta de sincronizarAceitesPorGeoId() do Apps Script.
+const COLUNAS_PROTEGIDAS_SYNC = new Set([
+  'SLA', 'Status_SLA', 'Semana Solicitação', 'Prioridade',
+  'Ativação W-1', 'Ativação W0', 'Status ID', 'ACEITES',
+  'ACEITE_PIPE', 'Check', 'STATUS_SBO', 'Status Go Live',
+  'DATA ATIVAÇÃO', 'SEMANA ATIVAÇÃO'
+]);
+
+async function sincronizarAceitesPorGeoId() {
+  const [aceitesRows, pipelineRows, propostasRows] = await Promise.all([
+    readSheet(SPREADSHEET_ID, NOME_ABA_ACEITES),
+    readSheet(SPREADSHEET_ID, NOME_ABA_PIPELINE),
+    readSheet(SPREADSHEET_ID, NOME_ABA_MINHAS_PROPOSTAS)
+  ]);
+
+  const aHeaders    = aceitesRows[0] || [];
+  const aGeoIdx     = aHeaders.indexOf('Geo_Id');
+  const aStatusIdx  = aHeaders.indexOf('Status_prospeccao');
+  if (aGeoIdx === -1 || aStatusIdx === -1) {
+    return { success: false, message: 'Colunas essenciais não encontradas em Aceites.' };
+  }
+
+  let totalAtualizacoes = 0;
+  const sheetsClient = await getSheetsClient();
+
+  async function syncParaAba(destRows, nomeAba) {
+    if (!destRows || destRows.length < 2) return 0;
+    const dHeaders = destRows[0];
+    const dGeoIdx  = dHeaders.indexOf('Geo_Id');
+    if (dGeoIdx === -1) return 0;
+
+    const cabB = dHeaders[1] ? String(dHeaders[1]).trim() : null;
+    const cabC = dHeaders[2] ? String(dHeaders[2]).trim() : null;
+
+    const updates = [];
+    for (let i = 1; i < aceitesRows.length; i++) {
+      const linha   = aceitesRows[i];
+      const geoId   = String(linha[aGeoIdx] || '').trim();
+      const status  = String(linha[aStatusIdx] || '').trim().toLowerCase();
+      if (!geoId || !['aceitou', 'ativo'].includes(status)) continue;
+
+      for (let j = 1; j < destRows.length; j++) {
+        if (String(destRows[j][dGeoIdx] || '').trim() !== geoId) continue;
+        // Encontrou linha correspondente
+        for (let c = 0; c < aHeaders.length; c++) {
+          const nomeCol = String(aHeaders[c]).trim();
+          const dIdx    = dHeaders.indexOf(nomeCol);
+          if (dIdx === -1 || nomeCol === 'Geo_Id') continue;
+          if (COLUNAS_PROTEGIDAS_SYNC.has(nomeCol)) continue;
+          if (nomeAba === NOME_ABA_PIPELINE) {
+            if (nomeCol === cabB || nomeCol === cabC) continue;
+            if (dIdx >= 34) continue; // AI+ são fórmulas
+          }
+          const valorOrigem  = linha[c];
+          const valorDestino = destRows[j][dIdx];
+          const vo = String(valorOrigem  === null || valorOrigem  === undefined ? '' : valorOrigem).trim();
+          const vd = String(valorDestino === null || valorDestino === undefined ? '' : valorDestino).trim();
+          if (vo !== vd) {
+            updates.push({
+              range: `${nomeAba}!${colToLetter(dIdx+1)}${j+1}`,
+              values: [[valorOrigem === null || valorOrigem === undefined ? '' : valorOrigem]]
+            });
+            totalAtualizacoes++;
+          }
+        }
+        break;
+      }
+    }
+
+    // Batch write
+    if (updates.length > 0) {
+      const CHUNK = 100;
+      for (let s = 0; s < updates.length; s += CHUNK) {
+        await sheetsClient.spreadsheets.values.batchUpdate({
+          spreadsheetId: SPREADSHEET_ID,
+          requestBody: { valueInputOption: 'RAW', data: updates.slice(s, s+CHUNK) }
+        });
+      }
+    }
+    return updates.length;
+  }
+
+  await syncParaAba(pipelineRows, NOME_ABA_PIPELINE);
+  await syncParaAba(propostasRows, NOME_ABA_MINHAS_PROPOSTAS);
+
+  return { success: true, message: `${totalAtualizacoes} atualizações realizadas.` };
+}
+
+// ─── atualizarTodasDatasPendentes ─────────────────────────────────────────────
+// Porta de atualizarTodasDatasPendentes() do Apps Script.
+// Preenche Cidade/Estado (geocoding), Data_Logistics, Data_MP, Data_Treinamento.
+async function atualizarTodasDatasPendentes() {
+  const fetch = require('node-fetch');
+  const MAPS_KEY = process.env.GOOGLE_MAPS_API_KEY || 'AIzaSyAsNE_w2gWedPwRvkQ2DkaRZ_8cNQaaaWU';
+
+  const [pipelineRows, aceitesRows, propostasRows, logisticsRows, sbo1Rows] = await Promise.all([
+    readSheet(SPREADSHEET_ID, NOME_ABA_PIPELINE),
+    readSheet(SPREADSHEET_ID, NOME_ABA_ACEITES),
+    readSheet(SPREADSHEET_ID, NOME_ABA_MINHAS_PROPOSTAS),
+    readSheet(SPREADSHEET_ID, 'Logistics').catch(() => []),
+    readSheet(SPREADSHEET_ID, 'Extração SBO1').catch(() => [])
+  ]);
+
+  // Mapa Logistics: place_id → approval_date (status = APROVADO)
+  const logMap = new Map();
+  if (logisticsRows.length > 1) {
+    const lHeaders  = logisticsRows[0];
+    const lPlaceIdx = lHeaders.indexOf('PLC_PLACE_ID');
+    const lStatusIdx= lHeaders.indexOf('APPROVAL_STATUS');
+    const lDateIdx  = lHeaders.indexOf('OPS_APPROVAL_DATE');
+    for (let i = 1; i < logisticsRows.length; i++) {
+      const pid = String(logisticsRows[i][lPlaceIdx === -1 ? 0 : lPlaceIdx] || '').trim();
+      const st  = String(logisticsRows[i][lStatusIdx === -1 ? 1 : lStatusIdx] || '').trim().toUpperCase();
+      const dt  = logisticsRows[i][lDateIdx === -1 ? 2 : lDateIdx];
+      if (pid && st === 'APROVADO' && dt) logMap.set(pid, dt);
+    }
+  }
+
+  // Mapa SBO1: SHP_AGENCY_ID (col A) → SHP_AGEN_ACTIVE_DT
+  const sbo1Map = new Map();
+  if (sbo1Rows.length > 1) {
+    const sHeaders    = sbo1Rows[0];
+    const sAgencyIdx  = sHeaders.indexOf('SHP_AGENCY_ID');
+    const sActiveDtIdx= sHeaders.indexOf('SHP_AGEN_ACTIVE_DT');
+    for (let i = 1; i < sbo1Rows.length; i++) {
+      const agId = String(sbo1Rows[i][sAgencyIdx === -1 ? 0 : sAgencyIdx] || '').trim();
+      const dt   = sbo1Rows[i][sActiveDtIdx === -1 ? 3 : sActiveDtIdx];
+      if (agId && dt) sbo1Map.set(agId, dt);
+    }
+  }
+
+  const geoCache = {};
+  async function reverseGeocode(lat, lng) {
+    const key = `${Number(lat).toFixed(6)},${Number(lng).toFixed(6)}`;
+    if (geoCache[key]) return geoCache[key];
+    try {
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${encodeURIComponent(key)}&language=pt-BR&key=${MAPS_KEY}`;
+      const resp = await fetch(url, { timeout: 5000 });
+      const data = await resp.json();
+      if (!data || !data.results || !data.results.length) {
+        geoCache[key] = { city: '', state: '' };
+        return geoCache[key];
+      }
+      let city = '', state = '';
+      const getComp = (comps, type) => {
+        const c = comps.find(x => x.types && x.types.includes(type));
+        return c ? c.long_name : null;
+      };
+      for (const r of data.results) {
+        const comps = r.address_components || [];
+        if (!state) state = getComp(comps, 'administrative_area_level_1') || '';
+        if (!city) {
+          for (const t of ['locality','administrative_area_level_2','postal_town','sublocality_level_1']) {
+            const v = getComp(comps, t);
+            if (v) { city = v; break; }
+          }
+        }
+        if (city && state) break;
+      }
+      geoCache[key] = { city, state };
+      return geoCache[key];
+    } catch (e) {
+      geoCache[key] = { city: '', state: '' };
+      return geoCache[key];
+    }
+  }
+
+  // ── Pipeline: Cidade, Estado, Data_Logistics ──────────────────────────────
+  if (pipelineRows.length > 1) {
+    const ph      = pipelineRows[0];
+    const cGeo    = getColIndex(ph, 'Geo_Id');
+    const cLat    = getColIndex(ph, 'Lat_geo');
+    const cLon    = getColIndex(ph, 'Long_geo');
+    const cCid    = getColIndex(ph, 'Cidade');
+    const cEst    = getColIndex(ph, 'Estado');
+    const cPlId   = getColIndex(ph, 'Place_id');
+    const cTipo   = getColIndex(ph, 'Tipo');
+    const cDataLg = getColIndex(ph, 'Data_Logistics');
+
+    const updCidade = [], updEstado = [], updDataLog = [];
+
+    for (let i = 1; i < pipelineRows.length; i++) {
+      const row  = pipelineRows[i];
+      const lat  = parseFloat(String(row[cLat] || '').replace(',', '.'));
+      const lon  = parseFloat(String(row[cLon] || '').replace(',', '.'));
+      const cid  = String(row[cCid] || '').trim();
+      const est  = String(row[cEst] || '').trim();
+
+      let newCid = cid, newEst = est;
+      if (!isNaN(lat) && !isNaN(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+        if (!cid || !est) {
+          const geo = await reverseGeocode(lat, lon);
+          if (geo.city) newCid = geo.city;
+          if (geo.state) newEst = geo.state;
+          await new Promise(r => setTimeout(r, 80)); // rate limit
+        }
+      }
+      updCidade.push([newCid]);
+      updEstado.push([newEst]);
+
+      // Data_Logistics
+      const placeId = String(row[cPlId] || '').trim();
+      const tipo    = String(row[cTipo] || '').trim().toUpperCase();
+      if (cDataLg !== -1 && placeId && (tipo === 'DC' || tipo === 'DC|PU') && logMap.has(placeId)) {
+        const d = logMap.get(placeId);
+        updDataLog.push([d instanceof Date ? d.toISOString().substring(0, 10) : String(d)]);
+      } else {
+        updDataLog.push([cDataLg !== -1 ? (row[cDataLg] || '') : '']);
+      }
+    }
+
+    const n = pipelineRows.length;
+    const dataToWrite = [];
+    if (cCid !== -1)  dataToWrite.push({ range: `${NOME_ABA_PIPELINE}!${colToLetter(cCid+1)}2:${colToLetter(cCid+1)}${n}`, values: updCidade });
+    if (cEst !== -1)  dataToWrite.push({ range: `${NOME_ABA_PIPELINE}!${colToLetter(cEst+1)}2:${colToLetter(cEst+1)}${n}`, values: updEstado });
+    if (cDataLg !== -1) dataToWrite.push({ range: `${NOME_ABA_PIPELINE}!${colToLetter(cDataLg+1)}2:${colToLetter(cDataLg+1)}${n}`, values: updDataLog });
+    if (dataToWrite.length) await batchWriteRanges(SPREADSHEET_ID, dataToWrite);
+  }
+
+  // ── Aceites e Minhas Propostas: Data_MP, Data_Treinamento, Data_Logistics ──
+  for (const [nomAba, abaRows] of [[NOME_ABA_ACEITES, aceitesRows], [NOME_ABA_MINHAS_PROPOSTAS, propostasRows]]) {
+    if (abaRows.length < 2) continue;
+    const ah     = abaRows[0];
+    const cPlId  = getColIndex(ah, 'Place_id');
+    const cDataMP= getColIndex(ah, 'Data_MP');
+    const cDataTr= getColIndex(ah, 'Data_Treinamento');
+    const cDataLg= getColIndex(ah, 'Data_Logistics');
+
+    const updMP = [], updTr = [], updLg = [];
+    for (let i = 1; i < abaRows.length; i++) {
+      const row    = abaRows[i];
+      const plId   = String(row[cPlId === -1 ? 10 : cPlId] || '').trim();
+      const exMP   = cDataMP !== -1 ? row[cDataMP] : '';
+      const exTr   = cDataTr !== -1 ? row[cDataTr] : '';
+      const exLg   = cDataLg !== -1 ? row[cDataLg] : '';
+
+      const activeDt = plId ? sbo1Map.get(plId) : null;
+      const fmt = v => (v instanceof Date ? v.toISOString().substring(0, 10) : String(v || ''));
+
+      updMP.push([(!exMP && activeDt) ? fmt(activeDt) : (exMP || '')]);
+      updTr.push([(!exTr && activeDt) ? fmt(activeDt) : (exTr || '')]);
+
+      if (!exLg && plId && logMap.has(plId)) {
+        updLg.push([fmt(logMap.get(plId))]);
+      } else {
+        updLg.push([exLg || '']);
+      }
+    }
+
+    const n = abaRows.length;
+    const dataToWrite = [];
+    if (cDataMP !== -1) dataToWrite.push({ range: `${nomAba}!${colToLetter(cDataMP+1)}2:${colToLetter(cDataMP+1)}${n}`, values: updMP });
+    if (cDataTr !== -1) dataToWrite.push({ range: `${nomAba}!${colToLetter(cDataTr+1)}2:${colToLetter(cDataTr+1)}${n}`, values: updTr });
+    if (cDataLg !== -1) dataToWrite.push({ range: `${nomAba}!${colToLetter(cDataLg+1)}2:${colToLetter(cDataLg+1)}${n}`, values: updLg });
+    if (dataToWrite.length) await batchWriteRanges(SPREADSHEET_ID, dataToWrite);
+  }
+
+  return { success: true, message: 'Datas pendentes atualizadas.' };
+}
+
+// ─── pipelineJobHourly ────────────────────────────────────────────────────────
+// Porta de pipelineJobHourly() do Apps Script.
+// Preenche CEP (col BI) e Bairro (col BJ) via reverse geocoding, em lotes.
+async function pipelineJobHourly() {
+  const fetch  = require('node-fetch');
+  const MAPS_KEY  = process.env.GOOGLE_MAPS_API_KEY || 'AIzaSyAsNE_w2gWedPwRvkQ2DkaRZ_8cNQaaaWU';
+  const BATCH_SIZE = 800;
+  const SLEEP_MS   = 80;
+  const COL_CEP    = 61; // BI (1-based)
+  const COL_BAIRRO = 62; // BJ (1-based)
+
+  const rows = await readSheet(SPREADSHEET_ID, NOME_ABA_PIPELINE);
+  if (rows.length < 2) return { success: false, message: 'Pipeline vazio.' };
+
+  const headers   = rows[0];
+  const cLat      = getColIndex(headers, 'Lat_geo');
+  const cLon      = getColIndex(headers, 'Long_geo');
+  if (cLat === -1 || cLon === -1) return { success: false, message: 'Colunas Lat_geo/Long_geo não encontradas.' };
+
+  let updated = 0;
+  const updCep = [], updBairro = [];
+
+  for (let i = 1; i < rows.length && updated < BATCH_SIZE; i++) {
+    const lat = parseFloat(String(rows[i][cLat] || '').replace(',', '.'));
+    const lon = parseFloat(String(rows[i][cLon] || '').replace(',', '.'));
+    const cepAtual    = String(rows[i][COL_CEP - 1] || '').trim();
+    const bairroAtual = String(rows[i][COL_BAIRRO - 1] || '').trim();
+
+    if (!cepAtual || !bairroAtual) {
+      if (!isNaN(lat) && !isNaN(lon) && lat >= -90 && lat <= 90) {
+        try {
+          const key = `${lat.toFixed(6)},${lon.toFixed(6)}`;
+          const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${encodeURIComponent(key)}&language=pt-BR&key=${MAPS_KEY}`;
+          const resp = await fetch(url, { timeout: 5000 });
+          const data = await resp.json();
+          let cep = '', bairro = '';
+          if (data && data.results) {
+            for (const r of data.results) {
+              for (const c of (r.address_components || [])) {
+                if (!cep && c.types.includes('postal_code')) cep = c.long_name || '';
+                if (!bairro) {
+                  if (c.types.includes('neighborhood')) bairro = c.long_name || '';
+                  else if (c.types.includes('sublocality_level_1')) bairro = c.long_name || '';
+                  else if (c.types.includes('sublocality')) bairro = c.long_name || '';
+                }
+              }
+              if (cep && bairro) break;
+            }
+          }
+          updCep.push({ row: i + 1, value: cep || cepAtual });
+          updBairro.push({ row: i + 1, value: bairro || bairroAtual });
+          updated++;
+          await new Promise(r => setTimeout(r, SLEEP_MS));
+        } catch (_) {
+          updCep.push({ row: i + 1, value: cepAtual });
+          updBairro.push({ row: i + 1, value: bairroAtual });
+        }
+      }
+    }
+  }
+
+  if (updCep.length > 0) {
+    const sheetsClient = await getSheetsClient();
+    const dataArr = [
+      ...updCep.map(u => ({ range: `${NOME_ABA_PIPELINE}!${colToLetter(COL_CEP)}${u.row}`, values: [[u.value]] })),
+      ...updBairro.map(u => ({ range: `${NOME_ABA_PIPELINE}!${colToLetter(COL_BAIRRO)}${u.row}`, values: [[u.value]] }))
+    ];
+    for (let s = 0; s < dataArr.length; s += 100) {
+      await sheetsClient.spreadsheets.values.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        requestBody: { valueInputOption: 'RAW', data: dataArr.slice(s, s+100) }
+      });
+    }
+  }
+
+  return { success: true, message: `${updated} linhas com CEP/Bairro atualizadas.` };
+}
+
+// ─── atualizarFinalSemana ─────────────────────────────────────────────────────
+// Porta de atualizarFinalSemana() do Apps Script.
+// Preenche Pipeline col BK (índice 62, 0-based) com info de funcionamento nos sábados.
+async function atualizarFinalSemana() {
+  const [pipelineRows, sbo1Rows] = await Promise.all([
+    readSheet(SPREADSHEET_ID, NOME_ABA_PIPELINE),
+    readSheet(SPREADSHEET_ID, 'Extração SBO1').catch(() => [])
+  ]);
+  if (pipelineRows.length < 2) return { success: false, message: 'Pipeline vazio.' };
+
+  // Mapa SBO1: agency_id → hours_display
+  const sboMap = new Map();
+  if (sbo1Rows.length > 1) {
+    const sh = sbo1Rows[0];
+    const sAgIdx = sh.indexOf('SHP_AGENCY_ID');
+    const sHrIdx = sh.findIndex(h => String(h || '').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '') === 'SHP_AGEN_HOURS_DISPLAY');
+    if (sAgIdx !== -1 && sHrIdx !== -1) {
+      for (let i = 1; i < sbo1Rows.length; i++) {
+        const agId = String(sbo1Rows[i][sAgIdx] || '').trim();
+        const hrs  = String(sbo1Rows[i][sHrIdx] || '').trim();
+        if (agId && (!sboMap.has(agId) || (sboMap.get(agId) === '' && hrs !== ''))) {
+          sboMap.set(agId, hrs);
+        }
+      }
+    }
+  }
+
+  const ph       = pipelineRows[0];
+  const cStatus  = getColIndex(ph, 'Status_prospeccao');
+  const cPlaceId = getColIndex(ph, 'Place_id');
+  const COL_BK   = 63; // column BK (1-based)
+
+  function extractSaturdayInfo(hoursDisplay) {
+    if (!hoursDisplay) return null;
+    const txt = String(hoursDisplay).toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/ /g, ' ').replace(/\s+/g, ' ').trim();
+    const sabRe = /\bsabado?s?\b/g;
+    const periods = [];
+    let m;
+    while ((m = sabRe.exec(txt)) !== null) {
+      const window = txt.substring(m.index + m[0].length, m.index + m[0].length + 120);
+      const p = window.replace(/\bas\b|\bàs\b|\bà\b/g, ' a ').replace(/[–—]/g, '-');
+      const re = /(\d{1,2})(?:[:h](\d{2}))?\s*(?:h|hs)?\s*(?:a|-)\s*(\d{1,2})(?:[:h](\d{2}))?\s*(?:h|hs)?/g;
+      let rm;
+      while ((rm = re.exec(p)) !== null) {
+        const h1 = rm[1].padStart(2,'0'), m1 = rm[2] || '00';
+        const h2 = rm[3].padStart(2,'0'), m2 = rm[4] || '00';
+        const t1 = m1 === '00' ? `${h1}h` : `${h1}h${m1}`;
+        const t2 = m2 === '00' ? `${h2}h` : `${h2}h${m2}`;
+        periods.push(`${t1} às ${t2}`);
+      }
+    }
+    if (periods.length) return 'Aberto sábado. ' + [...new Set(periods)].join(' | ');
+    if (/\bsabado?s?\b/.test(txt)) return 'Aberto sábado. (horário não identificado)';
+    return null;
+  }
+
+  const output = [];
+  for (let i = 1; i < pipelineRows.length; i++) {
+    const row    = pipelineRows[i];
+    const status = String(row[cStatus === -1 ? 9 : cStatus] || '').trim().toLowerCase();
+    const plId   = String(row[cPlaceId === -1 ? 10 : cPlaceId] || '').trim();
+    const oldVal = row[COL_BK - 1] !== undefined ? row[COL_BK - 1] : '';
+
+    if (!['ativo','aceitou'].includes(status)) { output.push([oldVal]); continue; }
+    if (!plId) { output.push(['Sem Place_id']); continue; }
+    const hrs = sboMap.get(plId);
+    if (!hrs) { output.push(['Sem dados no SBO']); continue; }
+    const info = extractSaturdayInfo(hrs);
+    output.push([info !== null ? info : 'Não abre aos sábados']);
+  }
+
+  const colLetter = colToLetter(COL_BK);
+  await batchWriteRanges(SPREADSHEET_ID, [{
+    range: `${NOME_ABA_PIPELINE}!${colLetter}2:${colLetter}${pipelineRows.length}`,
+    values: output
+  }]);
+
+  return { success: true, message: `${output.length} linhas de sábado atualizadas.` };
+}
+
+// ─── executarSincronizacaoBigQuery ────────────────────────────────────────────
+// Wrapper que lê as 3 abas e chama syncSheetsToBigQuery.
+async function executarSincronizacaoBigQuery() {
+  const bq = require('./bigquery');
+  const [pipelineRows, propostasRows, aceitesRows] = await Promise.all([
+    readSheet(SPREADSHEET_ID, NOME_ABA_PIPELINE),
+    readSheet(SPREADSHEET_ID, NOME_ABA_MINHAS_PROPOSTAS),
+    readSheet(SPREADSHEET_ID, NOME_ABA_ACEITES)
+  ]);
+
+  const sources = [
+    { sheetName: 'Pipeline',         headers: pipelineRows[0] || [],  rows: pipelineRows.slice(1),   primaryKeyField: 'GEO_ID',   tableId: 'BT_HUNTING_PIPELINE_MLB' },
+    { sheetName: 'Minhas Propostas', headers: propostasRows[0] || [], rows: propostasRows.slice(1),  primaryKeyField: 'PLACE_ID', tableId: 'BT_PIPELINE_HUNTING_PROPOSTAS' },
+    { sheetName: 'Aceites',          headers: aceitesRows[0] || [],   rows: aceitesRows.slice(1),    primaryKeyField: 'PLACE_ID', tableId: 'BT_PIPELINE_HUNTING_ACEITES' }
+  ].filter(s => s.headers.length > 0);
+
+  return bq.syncSheetsToBigQuery(sources);
+}
+
 module.exports = {
   getAppData,
   getServicoOriginal,
@@ -1483,5 +2303,23 @@ module.exports = {
   editarRegistro,
   isUserAdmin,
   cacheClear,
-  escreverDadosGoLive
+  escreverDadosGoLive,
+  escreverDadosBQParaAba,
+  escreverDadosLogistics,
+  escreverDadosMercadopago,
+  escreverDadosNewPlace,
+  escreverDadosTreinamento,
+  escreverDadosVolumetria,
+  escreverDadosSBO,
+  contarContatosPorGeoID,
+  preencherSVCMaisProximo,
+  preencherMultiplasAbas,
+  preencherDataLogistics,
+  updateGoLiveDates,
+  syncDataPipeline,
+  sincronizarAceitesPorGeoId,
+  atualizarTodasDatasPendentes,
+  pipelineJobHourly,
+  atualizarFinalSemana,
+  executarSincronizacaoBigQuery
 };
