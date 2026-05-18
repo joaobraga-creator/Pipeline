@@ -1,0 +1,21 @@
+name: Weekly Saturday Hours
+
+on:
+  schedule:
+    # Todo sábado às 07:00 UTC = 04:00 horário de Brasília
+    - cron: '0 7 * * 6'
+  workflow_dispatch:
+
+jobs:
+  sabado:
+    name: Atualizar horário de sábado
+    runs-on: ubuntu-latest
+    env:
+      BASE_URL: ${{ secrets.PIPELINE_API_URL }}
+
+    steps:
+      - name: atualizarFinalSemana (horário de funcionamento no sábado)
+        run: |
+          echo "▶ atualizarFinalSemana"
+          curl -sf --max-time 300 -X POST "$BASE_URL/api/atualizarFinalSemana" \
+            -H "Content-Type: application/json" || echo "⚠ atualizarFinalSemana falhou"

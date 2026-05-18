@@ -1,0 +1,21 @@
+name: Hourly CEP/Bairro Fill
+
+on:
+  schedule:
+    # Roda todo hora (minuto 10 de cada hora para não coincidir com o daily)
+    - cron: '10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  cep:
+    name: Preencher CEP e Bairro
+    runs-on: ubuntu-latest
+    env:
+      BASE_URL: ${{ secrets.PIPELINE_API_URL }}
+
+    steps:
+      - name: pipelineJobHourly (CEP + Bairro via Google Maps)
+        run: |
+          echo "▶ pipelineJobHourly"
+          curl -sf --max-time 300 -X POST "$BASE_URL/api/pipelineJobHourly" \
+            -H "Content-Type: application/json" || echo "⚠ pipelineJobHourly falhou"

@@ -1,0 +1,112 @@
+name: Daily Pipeline Sync
+
+on:
+  schedule:
+    # Roda todo dia às 06:00 UTC = 03:00 horário de Brasília
+    - cron: '0 6 * * *'
+  workflow_dispatch: # permite rodar manualmente pelo GitHub
+
+jobs:
+  sync:
+    name: Sincronização Diária
+    runs-on: ubuntu-latest
+    env:
+      BASE_URL: ${{ secrets.PIPELINE_API_URL }}
+      TIMEOUT: 300  # 5 minutos por etapa
+
+    steps:
+      - name: 1. Buscar dados Logistics (BQ → Sheets)
+        run: |
+          echo "▶ dadosLogistics"
+          curl -sf --max-time $TIMEOUT -X POST "$BASE_URL/api/dadosLogistics" \
+            -H "Content-Type: application/json" || echo "⚠ dadosLogistics falhou"
+
+      - name: 2. Buscar dados Mercado Pago (BQ → Sheets)
+        run: |
+          echo "▶ dadosMercadopago"
+          curl -sf --max-time $TIMEOUT -X POST "$BASE_URL/api/dadosMercadopago" \
+            -H "Content-Type: application/json" || echo "⚠ dadosMercadopago falhou"
+
+      - name: 3. Buscar dados New Place (BQ → Sheets)
+        run: |
+          echo "▶ dadosNewPlace"
+          curl -sf --max-time $TIMEOUT -X POST "$BASE_URL/api/dadosNewPlace" \
+            -H "Content-Type: application/json" || echo "⚠ dadosNewPlace falhou"
+
+      - name: 4. Buscar dados Treinamento (BQ → Sheets)
+        run: |
+          echo "▶ treinamentoB"
+          curl -sf --max-time $TIMEOUT -X POST "$BASE_URL/api/treinamentoB" \
+            -H "Content-Type: application/json" || echo "⚠ treinamentoB falhou"
+
+      - name: 5. Buscar dados Volumetria (BQ → Sheets)
+        run: |
+          echo "▶ dadosVolumetria"
+          curl -sf --max-time $TIMEOUT -X POST "$BASE_URL/api/dadosVolumetria" \
+            -H "Content-Type: application/json" || echo "⚠ dadosVolumetria falhou"
+
+      - name: 6. Buscar dados SBO (BQ → Sheets)
+        run: |
+          echo "▶ dadosSBO"
+          curl -sf --max-time $TIMEOUT -X POST "$BASE_URL/api/dadosSBO" \
+            -H "Content-Type: application/json" || echo "⚠ dadosSBO falhou"
+
+      - name: 7. Buscar dados GoLive (BQ → Sheets)
+        run: |
+          echo "▶ dadosGoLive"
+          curl -sf --max-time $TIMEOUT -X POST "$BASE_URL/api/dadosGoLive" \
+            -H "Content-Type: application/json" || echo "⚠ dadosGoLive falhou"
+
+      - name: 8. Sincronizar Data de Solicitação (planilha externa → Pipeline)
+        run: |
+          echo "▶ syncDataPipeline"
+          curl -sf --max-time $TIMEOUT -X POST "$BASE_URL/api/syncDataPipeline" \
+            -H "Content-Type: application/json" || echo "⚠ syncDataPipeline falhou"
+
+      - name: 9. Preencher SVC mais próximo
+        run: |
+          echo "▶ preencherSVCMaisProximo"
+          curl -sf --max-time $TIMEOUT -X POST "$BASE_URL/api/preencherSVCMaisProximo" \
+            -H "Content-Type: application/json" || echo "⚠ preencherSVCMaisProximo falhou"
+
+      - name: 10. Preencher Place_id nas abas (via LEAD_ID)
+        run: |
+          echo "▶ preencherMultiplasAbas"
+          curl -sf --max-time $TIMEOUT -X POST "$BASE_URL/api/preencherMultiplasAbas" \
+            -H "Content-Type: application/json" || echo "⚠ preencherMultiplasAbas falhou"
+
+      - name: 11. Preencher Data Logistics em Aceites
+        run: |
+          echo "▶ preencherDataLogistics"
+          curl -sf --max-time $TIMEOUT -X POST "$BASE_URL/api/preencherDataLogistics" \
+            -H "Content-Type: application/json" || echo "⚠ preencherDataLogistics falhou"
+
+      - name: 12. Atualizar datas Go Live e Status
+        run: |
+          echo "▶ updateGoLiveDates"
+          curl -sf --max-time $TIMEOUT -X POST "$BASE_URL/api/updateGoLiveDates" \
+            -H "Content-Type: application/json" || echo "⚠ updateGoLiveDates falhou"
+
+      - name: 13. Atualizar datas pendentes (Cidade/Estado/Data_Logistics)
+        run: |
+          echo "▶ atualizarTodasDatasPendentes"
+          curl -sf --max-time $TIMEOUT -X POST "$BASE_URL/api/atualizarTodasDatasPendentes" \
+            -H "Content-Type: application/json" || echo "⚠ atualizarTodasDatasPendentes falhou"
+
+      - name: 14. Contar contatos por Geo_ID
+        run: |
+          echo "▶ contarContatosPorGeoID"
+          curl -sf --max-time $TIMEOUT -X POST "$BASE_URL/api/contarContatosPorGeoID" \
+            -H "Content-Type: application/json" || echo "⚠ contarContatosPorGeoID falhou"
+
+      - name: 15. Sincronizar Aceites → Pipeline / Minhas Propostas
+        run: |
+          echo "▶ sincronizarAceitesPorGeoId"
+          curl -sf --max-time $TIMEOUT -X POST "$BASE_URL/api/sincronizarAceitesPorGeoId" \
+            -H "Content-Type: application/json" || echo "⚠ sincronizarAceitesPorGeoId falhou"
+
+      - name: 16. Sincronizar Sheets → BigQuery (upsert)
+        run: |
+          echo "▶ sincronizarBigQuery"
+          curl -sf --max-time $TIMEOUT -X POST "$BASE_URL/api/sincronizarBigQuery" \
+            -H "Content-Type: application/json" || echo "⚠ sincronizarBigQuery falhou"
